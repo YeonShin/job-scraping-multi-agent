@@ -1,0 +1,22 @@
+{
+  "name": "job-scraping-multi-agent",
+  "version": "2.0.0",
+  "description": "Antigravity Native Multi-Agent Job Scraping System with Notion Integration",
+  "scripts": {
+    "report": "node tools/discordNotifier.js"
+  },
+  "keywords": [
+    "antigravity",
+    "multi-agent",
+    "subagents",
+    "notion",
+    "playwright",
+    "job-scraper"
+  ],
+  "author": "YeonShin",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "playwright": "^1.50.1"
+  }
+}
