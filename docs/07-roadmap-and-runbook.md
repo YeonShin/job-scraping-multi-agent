@@ -1,135 +1,76 @@
 # 7. 구현 로드맵 및 운영 런북 (Roadmap & Runbook)
 
-본 문서는 프로젝트의 **점진적 구현 마일스톤(단계별 계획)**과 **환경 설정 및 실행 방법(Runbook)**을 정리한 가이드입니다.
+본 문서는 Antigravity 네이티브 멀티 에이전트 시스템의 **실제 디렉토리 구조, 운영 런북(Runbook), 환경 설정 및 스케줄 관리 방법**을 기술합니다.
 
 ---
 
-## 7.1 구현 로드맵 (Milestones)
+## 7.1 실제 프로젝트 디렉토리 구조
 
-```mermaid
-gantt
-    title 채용공고 수집 에이전트 구축 마일스톤
-    dateFormat  YYYY-MM-DD
-    section 1단계: 기반 구축
-    프로젝트 초기화 및 노션 스키마 확정        :done, m1, 2026-09-16, 1d
-    환경 변수 및 Notion MCP/SDK 연동 테스트     :active, m2, 2026-09-17, 1d
-    section 2단계: 핵심 수집기
-    원티드 스카우트 & 워커 E2E 프로토타입       :m3, 2026-09-18, 2d
-    신규 공고 중복 체크(Dedupe) 엔진 구현      :m4, 2026-09-20, 1d
-    section 3단계: 브라우저 & 비전
-    사람인/잡코리아 CDP & 스텔스 브라우징 구현   :m5, 2026-09-21, 2d
-    통이미지 공고 멀티모달 OCR 파이프라인 결합   :m6, 2026-09-23, 2d
-    section 4단계: 안정화 & 스케줄링
-    하네스 가드레일 (워커 풀, 타임아웃, 로깅)   :m7, 2026-09-25, 2d
-    새벽 야간 스케줄러 등록 및 종합 시험 가동    :m8, 2026-09-27, 2d
-```
-
----
-
-## 7.2 프로젝트 디렉토리 구조 제안
+현재 프로젝트는 레거시 크롤러 스크립트를 전면 정리하고, **Google Antigravity 에이전트 네이티브 표준 구조**로 운영되고 있습니다:
 
 ```text
 채용공고 스크랩/
-├── docs/                      # 📚 설계 및 아키텍처 문서 모음
-│   ├── 01-overview.md
-│   ├── 02-system-architecture.md
-│   ├── 03-agent-specifications.md
-│   ├── 04-browsing-and-mcp-strategy.md
-│   ├── 05-notion-schema-and-sync.md
-│   ├── 06-harness-engineering.md
-│   └── 07-roadmap-and-runbook.md
-├── src/
-│   ├── orchestrator.js        # Tier 1 총괄 관리자
-│   ├── scouts/                # Tier 2 사이트별 목록 스카우트
-│   │   ├── wantedScout.js
-│   │   ├── saraminScout.js
-│   │   └── jumpitScout.js
-│   ├── workers/               # Tier 3 공고 상세 분석 워커
-│   │   ├── jobAnalyzer.js
-│   │   └── visionOcr.js
-│   ├── notion/                # 노션 API / MCP 인터페이스
-│   │   ├── notionClient.js
-│   │   └── templateBuilder.js
-│   └── utils/                 # 가드레일, URL 정규화, 로거
-│       ├── dedupe.js
-│       ├── poolLimit.js
-│       └── logger.js
-├── logs/                      # 실행 로그 및 실패 공고 기록
-├── .env.example               # 환경 변수 템플릿
-├── package.json
-└── README.md
+├── .agents/
+│   ├── rules/
+│   │   └── orchestration-protocol.md   # 멀티 에이전트 오케스트레이션 행동 강령
+│   └── skills/                         # 플랫폼별 전문 서브에이전트 스킬 모음
+│       ├── notion-job-sync/SKILL.md    # 노션 DB 표준 18개 속성 발행 & 중복 검증
+│       ├── scout-jobkorea/SKILL.md     # 잡코리아 듀얼 트랙(대기업 SW / 중소 웹·FE) 스카우트
+│       ├── scout-saramin/SKILL.md      # 사람인 듀얼 트랙(대기업 IT / 중소 웹·FE) 스카우트
+│       └── scout-wanted/SKILL.md       # 원티드 개발 직군 웹·프론트엔드 스카우트
+├── docs/                               # 📚 시스템 공식 설계 및 운영 문서 모음
+│   ├── 01-overview.md                  # 시스템 개요 및 사용자 맞춤 심사 철학
+│   ├── 02-system-architecture.md       # 전체 멀티 에이전트 구조 및 듀얼 트랙 흐름
+│   ├── 03-agent-specifications.md      # 오케스트레이터 및 서브에이전트 입출력 명세
+│   ├── 04-browsing-and-mcp-strategy.md # 브라우징, iframe 원문 직통, 비전 스크린샷 전략
+│   ├── 05-notion-schema-and-sync.md    # 노션 18개 속성 스키마 및 본문 템플릿
+│   ├── 06-harness-engineering.md       # Rate Limit 방어 및 가드레일 설계
+│   ├── 07-roadmap-and-runbook.md       # 디렉토리 구조, 수동/자동 실행 런북 (본 문서)
+│   ├── draft-llm-orchestration-workflow.md # 하이브리드 워크플로우 명세서
+│   └── decisions/                      # 🏛️ 아키텍처 의사결정 기록 (ADR)
+│       ├── README.md                   # ADR 목록 및 개요
+│       └── 001-why-antigravity-as-orchestrator.md # Antigravity(Gemini Flash) 선정 배경
+├── tools/                              # 🛠️ 에이전트 보조 실행 유틸리티
+│   ├── discordNotifier.js              # 디스코드 일일 리포트 발송 스크립트
+│   └── notionJobPublisher.js           # 노션 데이터베이스 발행 및 동기화 스크립트
+├── AGENTS.md                           # 🤖 Antigravity 시스템 총괄 오케스트레이터 룰
+├── package.json                        # 프로젝트 의존성 설정
+└── .env                                # 노션 토큰, DB ID, 디스코드 웹훅 URL
 ```
 
 ---
 
-## 7.3 환경 변수 설정 (.env)
+## 7.2 운영 런북 (Operations Runbook)
+
+### 1. 사용자 수동 트리거 발화
+대화창에서 아래와 같이 자연어로 명령하면 즉시 멀티 에이전트 파이프라인이 가동됩니다:
+* *"오늘 새로 올라온 채용공고 탐색해서 등록해줘"*
+* *"사람인/원티드 공고 스크랩해서 노션에 넣어줘"*
+* *"새로운 신입 프론트엔드 공고 찾아서 디스코드로 보고해줘"*
+
+### 2. 정기 야간 자동화 (매일 새벽 02:00 KST)
+* **스케줄러 상태**: `task-364` (Daemon 모드로 백그라운드 상주 중)
+* **동작 흐름**:
+  1. 새벽 02:00 정각 백그라운드에서 Chief Orchestrator 자동 기동
+  2. 원티드, 사람인, 잡코리아 듀얼 트랙 탐색
+  3. 자격 심사 및 노션 DB 등록 (🏢 아이콘, AI 3줄 요약)
+  4. 디스코드 채널로 일일 요약 Embed 리포트 자동 전송
+
+### 3. 스케줄러 관리 및 시간 변경 방법
+* **스케줄 확인**: Antigravity 대화창에 `스케줄 상태 확인해줘` 요청
+* **스케줄 변경/신규 등록**:
+  - 채팅창에 `/schedule` 명령어 입력 후 원하는 시간대 지정 (예: `/schedule 매일 오전 08:00에 채용공고 탐색 및 등록 실행`)
+* **수동 즉시 알림 테스트**:
+  ```bash
+  node tools/discordNotifier.js
+  ```
+
+---
+
+## 7.3 환경 변수 설정 (`.env`)
 
 ```env
-# Notion 연동 키
-NOTION_API_KEY=ntn_xxxxxxxxxxxxxxxxxxxxxxxxx
+NOTION_API_KEY=secret_...
 NOTION_DATABASE_ID=343831b8-54df-8081-adb8-e6c93fc69e37
-
-# 브라우저 실행 모드 ('cdp' 또는 'persistent')
-BROWSER_MODE=persistent
-CHROME_CDP_URL=http://localhost:9222
-USER_DATA_DIR=./.chrome-profile
-
-# 실시간 알림 (디스코드 웹훅)
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
-
-# 하네스 설정
-MAX_CONCURRENT_WORKERS=3
-PER_JOB_TIMEOUT_MS=45000
 ```
-
-### 7.3.1 디스코드 웹훅 알림 메시지 포맷 (Embed Sample)
-새벽 수집이 완료되면 스마트폰/PC 디스코드로 다음과 같은 고급 임베드 카드가 도착합니다:
-```json
-{
-  "username": "채용공고 스크랩 에이전트 🏢",
-  "embeds": [
-    {
-      "title": "🌅 오늘의 웹개발 채용공고 수집 완료 리포트",
-      "color": 3447003,
-      "description": "오늘 새벽 탐색 및 노션 DB 저장이 정상 완료되었습니다.",
-      "fields": [
-        { "name": "📊 수집 통계", "value": "• 총 탐색: 48건\n• 신규 등록: **6건**\n• 마감 후 재오픈: **1건**\n• 기존 활성 스킵: 41건", "inline": false },
-        { "name": "✨ 오늘 발굴된 주요 신규 공고", "value": "1. [미리디] [미리캔버스] 백엔드 개발자\n2. [토스] 프론트엔드 플랫폼 엔지니어\n3. [당근] 커머스 웹 프론트엔드 개발자", "inline": false }
-      ],
-      "footer": { "text": "🗃️ 공고 분석 데이터베이스를 확인하세요!" }
-    }
-  ]
-}
-```
-
-
----
-
-## 7.4 실행 런북 (Runbook)
-
-### 1) 사전 의존성 설치
-```powershell
-npm install
-npx playwright install chromium
-```
-
-### 2) 테스트 1회 수집 실행
-```powershell
-# 단일 사이트(예: 원티드) 1~2개 공고 즉시 테스트
-npm run test:single
-```
-
-### 3) 전체 배치 실행 (새벽 수집 모의 실행)
-```powershell
-npm run start
-```
-
-### 4) 야간 자동 스케줄링 등록 (Windows 작업 스케줄러 예시)
-* 매일 새벽 02:00에 무인 실행되도록 Windows 작업 스케줄러에 등록:
-```powershell
-# PowerShell 스크립트로 백그라운드 등록
-$Action = New-ScheduledTaskAction -Execute "node.exe" -Argument "src/orchestrator.js" -WorkingDirectory "C:\Users\yeonn\Documents\Yeon\Project\채용공고 스크랩"
-$Trigger = New-ScheduledTaskTrigger -Daily -At 2:00AM
-Register-ScheduledTask -TaskName "JobScrapingNightlyAgent" -Action $Action -Trigger $Trigger -Description "채용공고 자동 수집 및 노션 등록 에이전트"
-```
-* 또는 Antigravity의 `/schedule` 기능을 통해 IDE 내부에서 스케줄을 유지할 수도 있습니다.
