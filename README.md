@@ -9,10 +9,11 @@
 본 프로젝트는 고정된 크롤러 스크립트가 아닌, **Antigravity의 지능형 에이전트 생태계(`.agents/` Skills, Rules, Sub-Agents)**를 기반으로 작동합니다.
 
 * **🧠 Chief Orchestrator (Antigravity Main Agent)**: 사용자의 자연어 명령을 수신하여 플랫폼별 탐색 전략을 세우고 서브에이전트를 지휘합니다.
-* **🎯 전문 서브에이전트군 (Platform Scouts)**:
+* **🎯 전문 서브에이전트군 (Platform Scouts & Importer)**:
   * [Wanted Scout Sub-Agent](.agents/skills/scout-wanted/SKILL.md): 원티드 신입/경력무관 프론트엔드·웹개발 탐색 및 JD 정밀 심사
   * [Saramin Scout Sub-Agent](.agents/skills/scout-saramin/SKILL.md): 사람인 듀얼 트랙(대기업 IT전체 / 중소 웹·FE) 탐색 및 본문 판독
   * [Jobkorea Scout Sub-Agent](.agents/skills/scout-jobkorea/SKILL.md): 잡코리아 듀얼 트랙(대기업 SW / 중소 웹·FE) 탐색 및 요강 심사
+  * [Job URL Importer](.agents/skills/job-url-importer/SKILL.md): 사용자가 제시한 특정 채용공고 링크 즉시 브라우징 및 단일 등록
 * **🗃️ Notion Job Sync**:
   * [Notion Job Sync Skill](.agents/skills/notion-job-sync/SKILL.md): 18개 표준 메타데이터 속성, 🏢 아이콘, AI 3줄 요약 콜아웃 블록, 마감 후 재오픈 감지 로직 적용
 * **📢 Discord 알림**:
@@ -24,9 +25,10 @@
 
 ```mermaid
 flowchart TD
-    User([👤 사용자]) -->|"오늘 채용공고 찾아줘"| Orchestrator["🧠 Chief Orchestrator (대화창 에이전트)"]
+    User([👤 사용자]) -->|"모드 A: 채용공고 찾아줘"| Orchestrator["🧠 Chief Orchestrator (대화창 에이전트)"]
+    User -->|"모드 B: 이 링크 등록해줘"| Importer["⚡ Job URL Importer (job-url-importer)"]
 
-    subgraph SubAgentFleet ["🤖 플랫폼별 전문 서브 에이전트"]
+    subgraph SubAgentFleet ["🤖 플랫폼별 전문 서브 에이전트 (모드 A)"]
         WantedAgent["🎯 Wanted Scout Agent (scout-wanted)"]
         SaraminAgent["🔍 Saramin Scout Agent (scout-saramin)"]
         JobkoreaAgent["🏢 Jobkorea Scout Agent (scout-jobkorea)"]
@@ -44,9 +46,11 @@ flowchart TD
     WantedAgent --> NotionSync
     SaraminAgent --> NotionSync
     JobkoreaAgent --> NotionSync
+    Importer --> NotionSync
 
     NotionSync --> NotionDB[("노션 채용 관리 DB")]
     Orchestrator --> DiscordReport["📢 Discord Webhook (tools/discordNotifier.js)"]
+    Importer --> DiscordReport
 ```
 
 ---
@@ -62,6 +66,7 @@ flowchart TD
 │       ├── scout-wanted/SKILL.md      # 원티드 채용공고 전문 탐색 스킬
 │       ├── scout-saramin/SKILL.md     # 사람인 채용공고 전문 탐색 스킬
 │       ├── scout-jobkorea/SKILL.md    # 잡코리아 채용공고 전문 탐색 스킬
+│       ├── job-url-importer/SKILL.md  # ⚡ 단일 채용공고 URL 즉시 분석 및 노션 등록 스킬
 │       └── notion-job-sync/SKILL.md   # 노션 DB 동기화 및 18개 속성 규격 스킬
 ├── AGENTS.md                          # Antigravity 에이전트 시스템 전체 명세
 ├── tools/
@@ -74,9 +79,10 @@ flowchart TD
 
 ---
 
-## 💬 사용 방법
+## 💬 사용 방법 (2가지 모드)
 
-채팅창에서 Antigravity에게 다음과 같이 자연어로 요청하면 파이프라인이 가동됩니다:
+### 1. 🔄 플랫폼 전체 자동 탐색 모드 (Batch Scout)
+채용공고 사이트 전체를 자동으로 탐색하여 최신 공고를 일괄 수집할 때 사용합니다:
 
 > 👤 **사용자**: *"채용공고 탐색해서 심사하고 노션에 등록해줘."*
 >
@@ -86,3 +92,18 @@ flowchart TD
 > 3. 상세 JD를 읽고 자격요건, 1~6차 전형절차, React/TS 지원 적합도 심사
 > 4. 심사 통과 건을 노션 DB에 🏢 아이콘 및 18개 속성과 함께 등록
 > 5. 최종 결과 브리핑 및 디스코드 리포트 자동 발송
+
+---
+
+### 2. ⚡ 단일 공고 URL 직통 등록 모드 (On-Demand Single Import)
+원하는 채용공고 링크를 직접 전달하여 해당 공고만 즉시 분석하고 노션에 넣고 싶을 때 사용합니다:
+
+> 👤 **사용자**: *"이 공고 노션에 등록해줘: https://www.wanted.co.kr/wd/123456"*  
+> *(또는 사람인, 잡코리아, 랠릿, 링크드인, 기업 채용페이지 링크 전달)*
+>
+> 🧠 **Antigravity (Job URL Importer)**:
+> 1. 내장 브라우저로 해당 공고 페이지를 직접 열어 본문 상세 요강 분석
+> 2. 채용 직무, 자격 요건, 우대 사항, 전형 단계, 마감일 등 18개 속성 및 AI 3줄 요약 추출
+> 3. 노션 채용 관리 DB에 `🏢` 아이콘과 함께 단일 등록
+> 4. 생성된 노션 페이지 링크와 분석 요약을 즉시 안내 (Discord 알림 연동)
+
