@@ -244,7 +244,25 @@ if (require.main === module) {
   const jsonPath = process.argv[2];
   if (jsonPath && fs.existsSync(jsonPath)) {
     const raw = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
-    const jobs = Array.isArray(raw) ? raw : [raw];
+    
+    // 배열 형태(기존) 및 메타데이터 Envelope 객체({ stats, jobs }) 둘 다 완벽 지원
+    let jobs = [];
+    let stats = { totalScanned: 0, skipped: 0, reopened: 0 };
+
+    if (Array.isArray(raw)) {
+      jobs = raw;
+      stats.totalScanned = jobs.length;
+    } else if (raw && Array.isArray(raw.jobs)) {
+      jobs = raw.jobs;
+      stats = {
+        totalScanned: raw.stats?.totalScanned || (jobs.length + (raw.stats?.skipped || 0)),
+        skipped: raw.stats?.skipped || 0,
+        reopened: raw.stats?.reopened || 0
+      };
+    } else if (raw) {
+      jobs = [raw];
+      stats.totalScanned = 1;
+    }
     
     (async () => {
       const published = [];
@@ -264,10 +282,10 @@ if (require.main === module) {
       
       if (published.length > 0) {
         await sendDiscordDailyReport({
-          totalScanned: jobs.length,
+          totalScanned: stats.totalScanned || published.length,
           newPublished: published.length,
-          reopened: 0,
-          skipped: 0,
+          reopened: stats.reopened || 0,
+          skipped: stats.skipped || Math.max(0, (stats.totalScanned || 0) - published.length),
           targetJobs: published
         });
       }
