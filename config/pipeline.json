@@ -1,0 +1,20 @@
+{
+  "windowSize": 3,
+  "maxQueuedPerTrack": 80,
+  "maxPagesPerTrack": 2,
+  "maxPhase2Pages": 2,
+  "reviewBatchSize": 12,
+  "suspectSimilarity": 0.7,
+  "jumpEnabled": {
+    "saramin": true,
+    "jobkorea": false,
+    "wanted": false
+  },
+  "expectedFilters": {
+    "saramin_track1": ["cat_kewd=84,86,87,92,89,91,101", "exp_cd=1", "company_type=scale001,scale002,scale003", "sort=RD"],
+    "saramin_track2": ["cat_kewd=92,87", "exp_cd=1", "sort=RD"],
+    "jobkorea_track1": ["신입", "대기업", "30대그룹사", "중견기업", "매출1000대기업"],
+    "jobkorea_track2": ["신입", "프론트엔드개발자", "웹개발자"],
+    "wanted_track2": ["job_sort=job.latest_order", "years=0", "selected=669", "selected=873"]
+  }
+}
