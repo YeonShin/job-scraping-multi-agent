@@ -1,0 +1,28 @@
+# 과거 의사결정 기록, 초안 및 로드맵 문서 (핵심 스펙 docs/01~06은 참조 허용)
+docs/decisions/
+docs/draft-*.md
+docs/*roadmap*
+
+# 대용량 캐시 및 데이터 파일 (필요 시 전용 도구로만 접근)
+data/existing_cache.json
+*.cache
+*.sqlite
+
+# 브라우저 녹화 및 세션 비디오
+*.webp
+artifacts/
+
+# 임시 스크립트 및 스크래치
+scratch/
+.agents/scratch/
+
+# 실행 로그 및 감사 기록
+logs/
+*.log
+
+# 보호 대상 핵심 설정 파일 (임의 수정 금지)
+mcp_config.json
+
+# 종속성 패키지 및 브라우저 캐시
+node_modules/
+playwright/.cache/

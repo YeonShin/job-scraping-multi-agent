@@ -6,111 +6,67 @@ description: >-
 
 # Job URL Importer Skill (단일 채용공고 링크 즉시 등록)
 
-사용자가 채팅창에 채용공고 URL을 제공하면, 해당 페이지를 사람이 보듯 브라우저로 직접 열어 공고 내용을 분석하고, 노션 채용 관리 데이터베이스에 표준화된 18개 속성, AI 3줄 요약, `🏢` 아이콘으로 등록하는 온디맨드(On-Demand) 전용 스킬입니다.
+사용자가 채팅창에 특정 채용공고 URL을 전달하며 등록을 요청했을 때 작동하는 온디맨드(On-Demand) 직통 임포트 파이프라인입니다.
+
+> 🚨 **[단일 모드 심사 제외 원칙]**
+> * 단일 모드에는 **합격/탈락 심사가 없습니다.** 사용자가 직접 지정하여 등록을 원한 공고이므로, 경력 요구, 퍼블리셔, 백엔드 등 `job-criteria.md`의 필터 기준과 맞지 않더라도 **묻지 않고 그대로 노션에 등록**합니다.
+> * 필드 및 3줄 요약 작성 포맷만 [`.agents/skills/job-reviewer/SKILL.md`](../job-reviewer/SKILL.md)의 규격을 준수합니다.
+> * 단일 모드는 탐색 체크포인트(`data/checkpoints/`)를 건드리지 않습니다.
 
 ---
 
-## 🎯 지원 대상 플랫폼
-* **원티드 (Wanted)**: `https://www.wanted.co.kr/wd/{id}`
-* **사람인 (Saramin)**: `https://www.saramin.co.kr/zf_user/jobs/relay/view?rec_idx={id}` (또는 iframe 직통 `view-detail?rec_idx={id}`)
-* **잡코리아 (Jobkorea)**: `https://www.jobkorea.co.kr/Recruit/GI_Read/{id}`
-* **기타 모든 채용 플랫폼 및 기업 커리어 페이지**:
-  - 랠릿, 점핏, 프로그래머스, 링크드인, 로켓펀치
-  - 기업 자체 ATS (그리팅, 나인하이어, 레버 등) 및 노션 채용공고
+## 🛠️ 실행 절차 (6단계 직통 프로토콜)
 
----
-
-## 🛠️ 실행 절차 (5단계 프로토콜)
-
-### 1단계: 기존 등록 여부 사전 확인 (중복 방지)
-1. `node tools/notionJobFetcher.js`를 실행하여 현재 노션 DB에 등록된 공고 목록을 조회합니다.
-2. 입력받은 URL 또는 정규화된 URL이 이미 등록되어 있는지 확인합니다:
-   - **이미 등록되어 있고 상태가 진행 중(미지원/서류작성중 등)**: 사용자에게 이미 등록된 공고임을 알리고, 그래도 덮어쓰거나 재등록할지 여부를 묻습니다.
-   - **기존 공고가 '마감' 상태이거나 신규 URL인 경우**: 계속 진행합니다.
-
-### 2단계: 공고 본문 브라우징 (No-Script 가드레일 준수)
-🚨 **절대 임의의 Node.js 크롤러 스크립트를 작성하지 마십시오!**  
-Antigravity의 내장 브라우저 도구(`playwright` MCP 또는 `browser_subagent`)를 사용하여 페이지를 직접 탐색합니다.
-
-* **사람인 URL 최적화**:
-  - URL에 `rec_idx=(\d+)`가 포함된 경우 iframe 본문 직통 주소인 `https://www.saramin.co.kr/zf_user/jobs/relay/view-detail?rec_idx=$1`로 이동하면 광고나 불필요한 UI 없이 본문만 즉시 확보할 수 있습니다.
-* **원티드 / 잡코리아 / 기타 플랫폼**:
-  - 사용자가 입력한 URL로 바로 브라우저를 이동하여 페이지 본문 텍스트, 자격 요건, 우대 사항, 전형 단계, 마감일 등을 파싱합니다.
-  - 팝업이나 쿠키 배너가 가리는 경우 닫거나 아래로 스크롤하여 본문 전체를 확인합니다.
-
-### 3단계: 표준 18개 속성 및 AI 3줄 요약 구조화
-본문에서 확인한 정보를 바탕으로 `notion-job-sync` 규격의 JSON 객체를 생성합니다:
-
-1. **기본 메타데이터**:
-   - `company`: 기업명 (예: `우아한형제들`)
-   - `position`: 채용직무명 (예: `배민B마트 웹 프론트엔드 개발자`)
-   - `url`: 원본 채용공고 URL
-   - `jobCategory`: `프론트엔드`, `풀스택`, `웹개발`, `소프트웨어` 중 1개 선택
-   - `experienceLevel`: `신입`, `경력무관`, `신입/경력`, `경력` 중 1개 선택
-   - `employmentType`: `정규직`, `계약직`, `인턴`, `전환형 인턴` 중 1개
-   - `industry`: `IT/소프트웨어`, `핀테크`, `커머스`, `게임` 등 대분류
-   - `industryDetail`: 세부 비즈니스 모델 (예: `배달 커머스 플랫폼`)
-   - `companyScale`: `스타트업`, `중소기업`, `중견기업`, `대기업`
-   - `location`: 근무지 (예: `서울 송파구 올림픽로 (재택 병행)`)
-   - `deadline`: 마감일 (`YYYY-MM-DD` 형식, 상시채용/채용시마감은 생략 가능)
-   - `postedDate`: 공고 등록일 (`YYYY-MM-DD` 형식, 확인 불가 시 생략)
-   - `documents`: 제출 서류 배열 (`["이력서", "포트폴리오", "자기소개서", "깃허브"]`)
-   - `1차` ~ `6차`: 전형 절차 매핑 (`서류전형`, `코딩테스트`, `과제테스트`, `직무면접`, `컬쳐핏면접`, `임직원면접`, `최종합격`)
-
-2. **AI 핵심 3줄 요약 (`summary`)**:
-   - `• [지원 적합도]: React/TypeScript 역량 관점에서 이 포지션이 사용자(프론트엔드 주니어/신입)에게 왜 적합한지 또는 주의할 점`
-   - `• [핵심 업무]: 담당하게 될 주력 서비스 및 핵심 기술적 역할`
-   - `• [어필 포인트]: 이력서 및 포트폴리오에서 강조하면 합격률을 높일 수 있는 핵심 역량/경험`
-
-3. **상세 본문 섹션 배열**:
-   - `mainTasks`: 주요 업무 항목 리스트
-   - `requirements`: 지원 자격 항목 리스트
-   - `preferredPoints`: 우대 사항 항목 리스트
-   - `benefits`: 복리후생 및 기업 문화 항목 리스트
-
-### 4단계: 노션 DB 정식 등록 (기존 Publisher 도구 독점 활용)
-1. 추출된 공고 데이터를 Envelope 형식의 임시 JSON 파일로 저장합니다:
-   - 경로: `.agents/scratch/import_job.json` (또는 `scratch/import_job.json`)
-   ```json
-   {
-     "stats": {
-       "totalScanned": 1,
-       "skipped": 0,
-       "reopened": 0
-     },
-     "jobs": [
-       {
-         "company": "기업명",
-         "position": "채용직무",
-         "url": "https://...",
-         "jobCategory": "프론트엔드",
-         "experienceLevel": "신입",
-         "employmentType": "정규직",
-         "industry": "IT/소프트웨어",
-         "companyScale": "스타트업",
-         "location": "서울 강남구",
-         "deadline": "2026-10-15",
-         "documents": ["이력서", "포트폴리오"],
-         "1차": "서류전형",
-         "2차": "과제테스트",
-         "3차": "직무면접",
-         "4차": "최종합격",
-         "summary": "• [지원 적합도]: ...\n• [핵심 업무]: ...\n• [어필 포인트]: ...",
-         "mainTasks": ["웹 서비스 프론트엔드 기능 개발"],
-         "requirements": ["React, TypeScript 경험"],
-         "preferredPoints": ["Next.js SSR 경험자"],
-         "benefits": ["유연근무제, 장비 지원"]
-       }
-     ]
-   }
+### 1단계: 세션 발급 및 노션 캐시 동기화
+1. KST 시각 기준 단일 runId 발급: `runId = "single-" + YYYYMMDD-HHmmss`
+2. 최신 노션 DB 캐시 확보:
+   ```bash
+   node tools/notionJobFetcher.js --out data/cache/notion_jobs.json
    ```
-2. 기존 도구 `node tools/notionJobPublisher.js <JSON파일경로>`를 실행하여 노션에 안전하게 발행합니다.
-   - `🏢` 빌딩 아이콘, 18개 속성, 블루 배경 💡 AI 3줄 요약 콜아웃 블록이 자동 생성됩니다.
-   - Discord 웹훅 설정이 활성화된 경우 등록 완료 리포트가 함께 발송됩니다.
 
-### 5단계: 사용자 완료 보고
-등록이 완료되면 대화창에 사용자 친화적인 결과 브리핑을 제공합니다:
-* **등록 기업 / 포지션 명**
-* **노션 페이지 바로가기 링크** (Publisher 실행 결과에서 반환된 URL)
-* **AI 3줄 요약 내용**
-* **주요 자격 요건 및 마감일**
+### 2단계: URL 식별 및 기존 등록 상태 대조
+1. URL에서 고유 `jobKey` 추출 (예: `saramin:55201338`, `wanted:12345`).
+2. `tools/jobFilter.js` 또는 노션 캐시를 통해 기존 등록 여부를 대조합니다:
+   - **기존 공고가 존재하고 상태가 `미지원`, `서류작성중` 등 진행 중인 경우**:
+     - 사용자에게 이미 등록되어 있음을 알리고("현재 '미지원' 상태로 등록되어 있습니다. 그래도 덮어쓰시겠습니까?"), 사용자가 재등록을 명시적으로 요청할 때만 진행.
+   - **기존 공고가 `마감` 상태이거나 미등록 신규 공고인 경우**: 즉시 다음 단계 진행.
+
+### 3단계: 공고 본문 브라우징 (No-Script 가드레일 준수)
+* **임의의 Node.js 크롤러 스크립트 작성 절대 금지**. 내장 브라우저 도구를 통해 사람이 보듯 열람합니다.
+* **사람인**: iframe 직통 주소(`https://www.saramin.co.kr/zf_user/jobs/relay/view-detail?rec_idx={id}`)로 이동하여 본문 확보.
+* **원티드 / 잡코리아 / 기타 플랫폼 (랠릿, 점핏, 자체 ATS 등)**: 제시된 URL로 직접 진입하여 본문 확인.
+
+### 4단계: 18개 표준 속성 정제 및 AI 3줄 요약 작성
+* [`.agents/skills/job-reviewer/SKILL.md`](../job-reviewer/SKILL.md)의 18개 표준 속성 및 AI 3줄 요약(`• [지원 적합도]`, `• [핵심 업무]`, `• [어필 포인트]`) 규격대로 JSON 데이터를 구성합니다.
+* verdict는 **항상 `"pass"`**로 설정합니다 (심사 탈락 판정 없음).
+* 단일 큐 디렉터리(`data/runs/<runId>/`)를 생성하고 `review_queue.json`에 1건 등록 후 submit:
+  ```json
+  [
+    {
+      "jobKey": "<jobKey>",
+      "site": "<site>",
+      "track": "manual",
+      "detailUrl": "<url>",
+      "title": "<position>",
+      "company": "<company>"
+    }
+  ]
+  ```
+  해당 단일 항목을 `data/runs/<runId>/review_queue.json`에 저장한 뒤 submit 실행:
+  ```bash
+  node tools/reviewQueue.js submit --run <runId> --input .agents/scratch/<runId>/review_<jobKey의 ':'를 '_'로 바꾼 이름>.json
+  ```
+
+### 5단계: 노션 DB 단일 발행 및 디스코드 알림
+1. 정규 발행 파이프라인 호출:
+   ```bash
+   node tools/publishRun.js --run <runId>
+   ```
+2. 단일 등록 전용 디스코드 웹훅 발송:
+   ```bash
+   node tools/discordNotifier.js --single data/runs/<runId>/publish_result.json
+   ```
+
+### 6단계: 사용자 브리핑
+* 등록 완료된 노션 페이지 링크(`notionUrl`)와 함께 기업명, 채용직무, 마감일, AI 3줄 요약을 대화창에 명확히 보고합니다.
+* 체크포인트(`data/checkpoints/`)는 일체 갱신하지 않습니다.
