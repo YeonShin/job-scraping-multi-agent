@@ -3,6 +3,7 @@
   "version": "2.0.0",
   "description": "Antigravity Native Multi-Agent Job Scraping System with Notion Integration",
   "scripts": {
+    "test": "node --test tests/*.test.js",
     "report": "node tools/discordNotifier.js"
   },
   "keywords": [
