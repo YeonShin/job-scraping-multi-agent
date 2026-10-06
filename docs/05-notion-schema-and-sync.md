@@ -17,7 +17,7 @@
 | **산업군 (상세)** | `rich_text` | 회사의 구체적 비즈니스 도메인 |
 | **회사규모** | `select` | `대기업`, `중견기업`, `스타트업`, `벤처기업`, `중소기업` 등 |
 | **근무지** | `rich_text` | 회사 위치 및 근무 형태 (예: `서울 강남구 테헤란로 (하이브리드)`) |
-| **채용링크** | `url` | 원본 채용공고 URL (**고유 식별 키로 사용**) |
+| **채용링크** | `url` | 원본 채용공고 URL (URL 정규화 후 `공고키` 다음 순위의 중복 판별에 사용) |
 | **마감일** | `date` | 마감일자 (`YYYY-MM-DD`, 상시채용인 경우 비워둠) |
 | **공고 등록일** | `date` | 공고가 게시된 날짜 (`YYYY-MM-DD`) |
 | **상태** | `status` | 기본값: **`미지원`** |
@@ -26,6 +26,8 @@
 | **전형 절차 (1차 ~ 6차)** | `select` | 공고 본문에서 추출한 1~6차 전형 단계 (`서류전형`, `코딩테스트`, `직무면접`, `임원면접` 등) |
 | **매력도** | `select` | **항상 비워둠 (None)** (사용자가 직접 주관적 평가를 내릴 수 있도록 공란 유지) |
 | **created_at** | `date` | 노션 페이지 등록 일시 |
+
+> **시스템 속성 `공고키`** (`rich_text`): 18개 표준 속성과 별도로 추가된 중복 방지용 속성입니다. 형식은 `플랫폼명:공고id`이며 (예: `saramin:51234567`, `jobkorea:47891234`, `wanted:301234`), 등록 시 `publishRun`이 자동으로 채웁니다. 형식과 추출 규칙은 [pipeline-spec.md §1](pipeline-spec.md)을 따릅니다.
 
 ---
 
@@ -46,13 +48,29 @@
 
 ## 5.3 노션 발행 유틸리티 도구 ([tools/notionJobPublisher.js](../tools/notionJobPublisher.js))
 
-에이전트는 정제된 공고 JSON 객체(단일 또는 배열)를 아래 명령어로 즉시 노션 DB에 등록할 수 있습니다:
+`notionJobPublisher.js`는 공고 1건을 노션 페이지로 변환·등록하는 모듈이며, 에이전트가 직접 호출하지 않습니다. 등록은 오케스트레이터가 `publishRun.js`로 실행합니다:
 
 ```bash
-# 단일 공고 JSON 전달 및 등록
-node tools/notionJobPublisher.js '{"company":"토스뱅크", "position":"프론트엔드", ...}'
-
-# 임시 파일 경로 전달
-node tools/notionJobPublisher.js scratch/approvedJobs.json
+node tools/publishRun.js --run <runId> --dry-run   # 미리보기
+node tools/publishRun.js --run <runId>             # 실제 발행
 ```
-* 등록 성공 즉시 노션 페이지 URL을 반환하며, 디스코드 알림을 자동으로 트리거합니다.
+* 심사 통과 건(`results.jsonl`)을 교차 플랫폼 중복 제거 후 350ms 간격으로 순차 등록하고, 실패건은 `retry.jsonl`에 누적합니다.
+* 디스코드 알림은 `discordNotifier.js`(`--report`, `--single`, `--error`)가 별도로 전송합니다.
+* 노션 DB의 `공고키` 속성(`플랫폼명:공고id`)이 중복 판정의 1순위 기준입니다.
+
+---
+
+## 5.4 중복 방지와 `공고키`
+
+이전에는 노션 등록 여부를 공고 URL이나 제목 일치로 대조했습니다. 현재는 `공고키`를 가장 먼저 사용하고, 약한 기준은 그 뒤에 둡니다. 대조는 `notionJobFetcher.js`가 만든 캐시(`data/cache/notion_jobs.json`)를 기준으로, 심사 전에 `jobFilter.js`가 목록 단계에서 수행합니다.
+
+| 순서 | 대조 기준 | 결과 |
+| :---: | :--- | :--- |
+| 1 | 레지스트리(`data/registry.json`)에 같은 `공고키`가 있음 (등록, 탈락, 실패, 등록 대기 포함) | `SKIP_REGISTRY` |
+| 2 | 노션 캐시에 같은 `공고키` 또는 정규화 URL이 있음 | 상태가 `마감`이면 `REOPEN_CANDIDATE`(재수집 허용), 그 외 `SKIP_NOTION` |
+| 3 | 같은 `companyKey`이고 `titleKey`가 완전 일치 (노션 캐시, 레지스트리, 이번 큐 순) | `SKIP_DUP` (노션 쪽이 `마감`이면 `REOPEN_CANDIDATE`) |
+| 4 | 같은 `companyKey`이고 `titleKey` 유사도 ≥ 0.7 | `SUSPECT` (큐에 적재하되 `dupHint`로 심사관에게 경고) |
+| 5 | 위에 해당 없음 | `NEW` |
+
+* 같은 공고가 다른 플랫폼에 동시에 올라오면 `공고키`가 달라 1, 2번으로는 걸러지지 않으므로, 3, 4번의 기업명·제목 기준이 이를 구분합니다. 심사 후 발행 단계에서는 `publishRun`이 교차 플랫폼 중복 1건만 등록합니다.
+* `companyKey`, `titleKey` 정규화 규칙은 [pipeline-spec.md §2](pipeline-spec.md)를 따릅니다.
