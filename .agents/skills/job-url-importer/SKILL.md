@@ -31,10 +31,12 @@ description: >-
      - 사용자에게 이미 등록되어 있음을 알리고("현재 '미지원' 상태로 등록되어 있습니다. 그래도 덮어쓰시겠습니까?"), 사용자가 재등록을 명시적으로 요청할 때만 진행.
    - **기존 공고가 `마감` 상태이거나 미등록 신규 공고인 경우**: 즉시 다음 단계 진행.
 
-### 3단계: 공고 본문 브라우징 (No-Script 가드레일 준수)
-* **임의의 Node.js 크롤러 스크립트 작성 절대 금지**. 내장 브라우저 도구를 통해 사람이 보듯 열람합니다.
-* **사람인**: iframe 직통 주소(`https://www.saramin.co.kr/zf_user/jobs/relay/view-detail?rec_idx={id}`)로 이동하여 본문 확보.
-* **원티드 / 잡코리아 / 기타 플랫폼 (랠릿, 점핏, 자체 ATS 등)**: 제시된 URL로 직접 진입하여 본문 확인.
+### 3단계: 공고 본문 브라우징 (Playwright MCP 활용)
+* **임의의 Node.js 크롤러 스크립트 작성 절대 금지**. Playwright MCP 도구를 통해 신속하고 안정적으로 확인합니다.
+* `browser_navigate`로 진입 후 `browser_snapshot`을 호출하여 텍스트를 즉시 확인합니다.
+  - **사람인**: iframe 직통 주소(`https://www.saramin.co.kr/zf_user/jobs/relay/view-detail?rec_idx={id}`)로 이동하여 본문 확보.
+  - **원티드 / 잡코리아 / 기타 플랫폼 (랠릿, 점핏, 자체 ATS 등)**: 제시된 URL로 직접 진입하여 본문 확인.
+* **통이미지 공고인 경우**: `browser_take_screenshot`으로 화면을 캡처한 뒤 비전(Vision)으로 판독합니다.
 
 ### 4단계: 18개 표준 속성 정제 및 AI 3줄 요약 작성
 * [`.agents/skills/job-reviewer/SKILL.md`](../job-reviewer/SKILL.md)의 18개 표준 속성 및 AI 3줄 요약(`• [지원 적합도]`, `• [핵심 업무]`, `• [어필 포인트]`) 규격대로 JSON 데이터를 구성합니다.

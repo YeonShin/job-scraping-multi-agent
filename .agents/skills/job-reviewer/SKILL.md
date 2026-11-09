@@ -26,14 +26,21 @@ node tools/reviewQueue.js next --run <runId>
 
 ---
 
-### 2단계: 공고별 상세 본문 열람 (No-Script 가드레일)
+### 2단계: 공고별 상세 본문 열람 (Playwright MCP 하이브리드 검사)
 🚨 **임의의 Node.js 크롤러나 fetch 스크립트를 작성하지 마십시오.**  
-항목의 `detailUrl`을 **Antigravity 내장 브라우저 도구**를 통해 사람이 열람하듯 직접 확인합니다.
+항목의 `detailUrl`을 **Playwright MCP** 도구를 통해 신속하고 안정적으로 확인합니다. (`browser_subagent`의 무거운 멀티턴 브라우징으로 인한 503 오류 및 지연을 방지하기 위해 공식 권장되는 표준 방식입니다.)
 
-* **사람인**: `detailUrl`이 이미 `https://www.saramin.co.kr/zf_user/jobs/relay/view-detail?rec_idx={id}`(iframe 직통)로 지정되어 있으므로 불필요한 배너 없이 본문 텍스트를 즉시 확인합니다.
-* **잡코리아 / 원티드**: `detailUrl`로 직접 진입하여 본문, 전형단계, 마감일을 확인합니다.
-* **통이미지 공고**: 텍스트 복사가 불가능한 통이미지 형태의 공고는 브라우저 스크린샷 도구를 활용하여 비전(Vision)으로 자격요건과 마감일을 판독합니다.
-* **가림막 / 팝업**: 팝업이나 쿠키 안내 레이어가 본문을 가릴 경우 닫기 버튼을 클릭하거나 스크롤하여 본문 전체를 읽습니다.
+1. **페이지 진입 및 텍스트 스냅샷 (`browser_navigate` ➔ `browser_snapshot`)**:
+   - `browser_navigate`로 `detailUrl`에 진입합니다.
+     - **사람인**: `detailUrl`이 이미 `https://www.saramin.co.kr/zf_user/jobs/relay/view-detail?rec_idx={id}`(iframe 직통)로 지정되어 있어 배너 없이 본문만 빠르게 렌더링됩니다.
+     - **잡코리아 / 원티드**: `detailUrl`로 진입하여 본문을 확인합니다.
+   - `browser_snapshot`을 호출하여 페이지의 접근성 트리(Accessibility Tree) 텍스트를 1초 만에 확인합니다. 일반 텍스트 기반 공고는 이 단계에서 자격요건, 우대사항, 마감일이 즉시 판독됩니다.
+2. **통이미지(포스터형) 공고 비전 판독 (`browser_take_screenshot`)**:
+   - `browser_snapshot` 결과에 텍스트가 거의 없고 `img`나 `figure` 태그만 있는 통이미지 공고인 경우:
+   - `browser_take_screenshot`을 호출하여 화면을 캡처한 뒤 멀티모달 LLM(Vision)으로 포스터 내 자격요건, 우대사항, 마감일을 판독합니다.
+   - 포스터가 세로로 긴 경우, `browser_evaluate`로 `() => { window.scrollBy(0, 800); }` 스크롤 후 추가 스크린샷을 찍어 판독합니다.
+3. **완료 후 정리**:
+   - 배치의 모든 검토가 끝나면 `browser_close`를 호출하여 브라우저 세션을 정리합니다.
 
 ---
 

@@ -1,6 +1,6 @@
 # 4. 브라우징 및 MCP 연동 전략 (Browsing & MCP Strategy)
 
-본 문서는 Antigravity 에이전트 환경에서 브라우저 도구(`browser_subagent`, `browser_evaluate` 등)를 활용하여 **수집 에이전트는 목록을 한 번에 추출**하고, **심사 에이전트는 상세 본문을 열람**하는 브라우징 전략과 플랫폼별 특성을 기술합니다.
+본 문서는 Antigravity 에이전트 환경에서 브라우저 도구를 역할에 따라 나누어, **수집 에이전트는 Playwright MCP로 목록을 한 번에 추출**하고 **심사 에이전트는 Playwright MCP (`browser_snapshot` + `browser_take_screenshot`)로 상세 본문을 열람**하는 브라우징 전략과 플랫폼별 특성을 기술합니다.
 
 ---
 
@@ -9,15 +9,15 @@
 ```mermaid
 flowchart TD
     subgraph Scout ["🔍 수집 에이전트 (scout-*)"]
-        ScoutAction["목록 페이지 진입 → snippet.js 1회 실행<br/>→ scanController가 반환한 액션으로 이동"]
+        ScoutAction["Playwright MCP로 목록 페이지 진입<br/>→ snippet.js 1회 evaluate<br/>→ scanController가 반환한 액션으로 이동"]
     end
 
     subgraph Reviewer ["⚖️ 심사 에이전트 (job-reviewer)"]
-        ReviewAction["큐에서 받은 detailUrl 진입<br/>→ 본문 열람, 통이미지는 스크린샷 판독"]
+        ReviewAction["Playwright MCP로 detailUrl 진입<br/>→ browser_snapshot으로 텍스트 판독<br/>→ 통이미지는 browser_take_screenshot 비전 판독"]
     end
 
-    subgraph BrowserInterface ["🌐 브라우저 도구"]
-        Tools["browser_subagent / browser_navigate<br/>browser_evaluate (snippet 실행)<br/>browser_screenshot"]
+    subgraph BrowserInterface ["🌐 브라우저 도구 (Playwright MCP)"]
+        Tools["통합 브라우저 제어: Playwright MCP<br/>(browser_navigate, browser_evaluate,<br/>browser_snapshot, browser_take_screenshot,<br/>browser_click, browser_wait_for)"]
     end
 
     subgraph Targets ["🎯 채용 플랫폼"]
@@ -32,14 +32,14 @@ flowchart TD
 ```
 
 * **수집**: 에이전트가 스크롤과 DOM 읽기를 반복하지 않고, 플랫폼별 `snippet.js`(`.agents/skills/scout-*/snippet.js`)를 1회 실행해 목록 전체를 JSON으로 받습니다.
-* **심사**: 본문 열람은 `job-reviewer`가 담당하며, 임의의 크롤링 스크립트 작성은 금지됩니다.
+* **심사**: 본문 열람은 `job-reviewer`가 담당하며, 임의의 크롤링 스크립트 작성은 금지됩니다. Playwright MCP를 통해 접근성 트리 스냅샷 및 스크린샷 비전 판독으로 신속(건당 2초)하고 안정적으로 심사합니다.
 
 ---
 
 ## 4.2 목록 수집 전략 (수집 에이전트)
 
 ### 공통 방식
-* 목록 추출은 플랫폼별 `snippet.js`를 `browser_evaluate`로 **1회 실행**하여 수행합니다. 스크롤과 DOM 읽기를 반복하지 않습니다.
+* 목록 추출은 플랫폼별 `snippet.js`를 Playwright MCP `browser_evaluate`로 **1회 실행**하여 수행합니다. `browser_subagent`는 JS 실행 동작이 없어 같은 일을 스크롤과 DOM 추출 반복으로 대체하므로 사용하지 않습니다. 스크롤과 DOM 읽기를 반복하지 않습니다.
 * 광고 영역 배제는 snippet의 컨테이너 셀렉터가 처리합니다 (사람인 `.common_recruilt_list`, 잡코리아 `#dev-gi-list`, 원티드 `ul[data-cy="job-list"]`).
 * `CONTAINER_NOT_FOUND`가 반환되면 1회 재시도 후 오케스트레이터에 보고합니다.
 * 추출 결과는 `scanController.js step`에 전달하고, 반환된 액션(`NEXT_PAGE`, `JUMP_PAGE`, `STOP`)에 따라 이동합니다.
@@ -50,19 +50,19 @@ flowchart TD
 
 ### 잡코리아 (Jobkorea) — 필터 클릭 및 버튼 이동
 * 필터와 페이지 상태가 **URL 쿼리 파라미터에 반영되지 않고 페이지 내부 AJAX로만 동작**합니다.
-* 기본 URL(`recruit/joblist?menucode=duty`)에 진입한 뒤 `browser_subagent`가 필터 UI(직무, 경력, 기업 형태)를 직접 클릭하고 렌더링 완료를 대기합니다. 클릭 항목의 정확한 값은 [job-criteria.md §4.3](../.agents/rules/job-criteria.md)을 따릅니다.
+* 기본 URL(`recruit/joblist?menucode=duty`)에 진입한 뒤 `browser_snapshot` 확인 후 `browser_click`으로 필터 UI(직무, 경력, 기업 형태)를 직접 클릭하고 렌더링 완료를 대기합니다. 클릭 항목의 정확한 값은 [job-criteria.md §4.3](../.agents/rules/job-criteria.md)을 따릅니다.
 * 다음 페이지로의 이동도 버튼 조작이며, 서브에이전트가 직접 판단합니다.
 * 정렬이 수정/끌올 기준이라 ID가 역전될 수 있어 점프는 비활성이고, 1페이지씩 앵커를 검증합니다.
 
 ### 원티드 (Wanted) — 무한 스크롤
-* 페이지 맨 아래로 스크롤하고 신규 카드가 로드될 때까지 1~2초 대기한 뒤 `snippet.js`를 다시 실행합니다.
+* 페이지 맨 아래로 스크롤하고 신규 카드가 로드될 때까지 `browser_wait_for`로 1~2초 대기한 뒤 `snippet.js`를 다시 실행합니다.
 * 잡코리아와 마찬가지로 ID 역전 가능성 때문에 `JUMP_PAGE`는 비활성입니다.
 
 ---
 
 ## 4.3 본문 열람 전략 (심사 에이전트)
 
-심사 에이전트는 모든 플랫폼에서 큐에서 받은 `detailUrl`로 이동하여 상세 본문, 전형 단계, 마감일을 확인합니다. `detailUrl`은 `jobFilter`가 큐에 적재할 때 공고 ID로 정규화해 만들며, 에이전트가 직접 조립하지 않습니다.
+심사 에이전트는 Playwright MCP(`browser_navigate` + `browser_snapshot`, 통이미지 시 `browser_take_screenshot`)로, 모든 플랫폼에서 큐에서 받은 `detailUrl`로 이동하여 상세 본문, 전형 단계, 마감일을 확인합니다. `detailUrl`은 `jobFilter`가 큐에 적재할 때 공고 ID로 정규화해 만들며, 에이전트가 직접 조립하지 않습니다.
 
 | 플랫폼 | detailUrl |
 | :--- | :--- |
@@ -85,6 +85,6 @@ flowchart TD
 1. **과도한 고주파 요청 방지**:
    - 목록 조회 및 상세 페이지 접근 간 자연스러운 딜레이 유지.
    - 노션 캐시와 `registry`(탈락 이력 포함)를 이용한 `jobFilter` 사전 필터링으로 상세 페이지 방문 횟수를 최소화(신규 건만 방문).
-   - 기본 탐색 범위는 트랙당 2페이지(`maxPagesPerTrack`)이며, 점프는 사람인에서만 허용됩니다.
+   - 기본 탐색 범위는 트랙당 신규 공고 최대 100건(`maxQueuedPerTrack: 100`, 최대 20페이지)이며, 점프는 사람인에서만 허용됩니다.
 2. **페이지 로드 완료 감지**:
    - `networkidle` 또는 필수 DOM 셀렉터 등장 시점까지 안정적으로 대기하여 불완전한 페이지 파싱 방지.

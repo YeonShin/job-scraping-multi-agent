@@ -13,6 +13,11 @@ description: >-
 > - **판단은 코드가 전담**: 다음 페이지 이동 여부, 구간 점프, 수집 종료는 모두 `tools/scanController.js`의 반환값(`action`)에 따릅니다.
 > - **필터 기준 및 규격**: [`.agents/rules/job-criteria.md`](../../rules/job-criteria.md) 및 [`docs/pipeline-spec.md`](../../../docs/pipeline-spec.md)를 참조합니다.
 
+> 🌐 **[브라우저 도구 규칙]**
+> - 목록 수집은 **Playwright MCP 도구**(`browser_navigate`, `browser_evaluate`, `browser_snapshot`, `browser_click`, `browser_wait_for` 등)를 직접 호출하여 수행합니다.
+> - `snippet.js`는 `browser_evaluate`로 **파일 내용 그대로** 실행합니다. **Antigravity `browser_subagent`에 위임하거나 코드를 작업 프롬프트에 붙여 넣지 마십시오.** (`browser_subagent`는 JS를 실행하지 못하고 스크롤·DOM 추출을 반복하는 방식으로 대체하여 느려지고 결과가 불안정해집니다.)
+> - `browser_evaluate`의 인자 `function`은 `() => { ... }` 형태를 기대합니다. `snippet.js`는 `(() => {...})()` 형태이므로 형식 오류가 나면 `() => ( <snippet 전체 식> )`로 감싸 실행하되 내용은 바꾸지 마십시오.
+
 ---
 
 ## 1. 플랫폼 필터 진입 URL
@@ -29,9 +34,9 @@ description: >-
 동일 에이전트가 **트랙 1 ➔ 트랙 2** 순서로 순차 수행합니다.
 
 ### 🔄 단일 트랙 수집 루프
-1. **페이지 진입**: 트랙 URL(기본 `page=1`)로 내장 브라우저 이동.
+1. **페이지 진입**: 트랙 URL(기본 `page=1`)로 Playwright MCP `browser_navigate` 이동.
 2. **목록 스니펫 실행**:
-   - 브라우저 콘솔에서 [`.agents/skills/scout-saramin/snippet.js`](snippet.js) 코드를 `browser_evaluate`로 실행.
+   - Playwright MCP `browser_evaluate`로 [`.agents/skills/scout-saramin/snippet.js`](snippet.js)의 내용을 그대로 실행.
    - 반환된 `{ appliedFilters, items }` JSON 데이터를 `data/runs/{runId}/saramin_{track}/raw_{page}.json` 파일로 저장.
 3. **컨트롤러 스텝 호출**:
    ```bash
@@ -39,11 +44,11 @@ description: >-
    ```
 4. **결과 액션(`action`) 수행**:
    * **`NEXT_PAGE`** 또는 **`JUMP_PAGE`**:
-     - 반환된 `page` 번호로 URL의 `page` 파라미터를 변경하여 브라우저 이동 후 2단계로 복귀.
+     - 반환된 `page` 번호로 URL의 `page` 파라미터를 변경하여 `browser_navigate`로 이동 후 2단계로 복귀.
      - 예: `&page=2` ➔ `&page=15` (JUMP_PAGE)
    * **`STOP`**:
      - 해당 트랙 수집 즉시 종료.
-     - 반환된 `reason`(`LIMIT_PAGES`, `LIMIT_QUEUED`, `LIST_END`, `FILTER_MISMATCH` 등)과 누적 카운터를 확인하고 오케스트레이터에게 보고. (기본 설정 시 트랙별 최대 2페이지 탐색 후 LIMIT_PAGES 종료)
+     - 반환된 `reason`(`LIMIT_PAGES`, `LIMIT_QUEUED`, `LIST_END`, `FILTER_MISMATCH` 등)과 누적 카운터를 확인하고 오케스트레이터에게 보고. (기본 설정 시 트랙당 신규 공고 최대 100건 달성 시 LIMIT_QUEUED 또는 안전 상한 20페이지 도달 시 종료)
 5. **다음 트랙 진행**: 트랙 1이 종료되면 트랙 2로 진입하여 동일 루프 반복.
 
 ---

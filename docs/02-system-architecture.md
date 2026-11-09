@@ -25,7 +25,7 @@ flowchart TD
     end
 
     subgraph ToolingLayer ["🛠️ 브라우저 & 툴링 인프라"]
-        BrowserTools["Playwright MCP & browser_subagent<br/>- 동적 페이지 렌더링 대기<br/>- 통이미지/배너 스크린샷 캡처"]
+        BrowserTools["브라우저 도구 (Playwright MCP)<br/>- 수집: Playwright MCP (snippet.js evaluate)<br/>- 심사: Playwright MCP (browser_snapshot, take_screenshot)"]
         HarnessTools["코드 하네스 (tools/)<br/>- scanController / jobFilter: 구간 스킵, 중복 필터<br/>- reviewQueue: 심사 큐, 스키마 검증<br/>- publishRun: 노션 발행<br/>- runLock / watchdog"]
     end
 
@@ -75,7 +75,7 @@ flowchart TD
 
 * **오케스트레이션 엔진**: Google Antigravity IDE Native Multi-Agent Framework
 * **스킬 시스템**: `.agents/skills/` (YAML Frontmatter 기반 에이전트 행동 지침)
-* **브라우저 제어**: Playwright MCP 서버 + Antigravity `browser_subagent`
+* **브라우저 제어**: Playwright MCP 서버 통합 (목록 수집은 evaluate, 본문 열람·심사는 snapshot / screenshot 비전 판독)
 * **노션 연동**: Notion MCP 및 [tools/publishRun.js](../tools/publishRun.js) (내부적으로 [tools/notionJobPublisher.js](../tools/notionJobPublisher.js) 사용)
 * **알림 연동**: Discord Webhook (`tools/discordNotifier.js`)
 * **실행 방식**: 대화창 기반 온디맨드(On-Demand) 자연어 오케스트레이션

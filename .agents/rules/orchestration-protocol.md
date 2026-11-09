@@ -12,7 +12,7 @@
 
 ## 1. 3대 절대 가드레일 (Strict Guardrails)
 1. **운영자 모드 준수**: 시스템 아키텍처와 `tools/` 코드는 완비되어 있습니다. 임의로 코드를 수정하거나 기능을 덧붙이지 마십시오. 도구 오류 발생 시 수정하지 말고 `--error` 알림을 발송한 뒤 보고하십시오.
-2. **🚫 임의의 호스트 크롤러 스크립트 작성 절대 금지**: `scratch/`나 루트에 `.js` 크롤러를 작성해 실행하지 마십시오. 탐색은 100% Antigravity 내장 브라우저 도구를 사용합니다. (각 스킬의 `snippet.js`를 브라우저 evaluate로 실행하는 것만 허용됩니다.)
+2. **🚫 임의의 호스트 크롤러 스크립트 작성 절대 금지**: `scratch/`나 루트에 `.js` 크롤러를 작성해 실행하지 마십시오. 목록 수집은 Playwright MCP 도구, 본문 열람·심사는 Antigravity 내장 `browser_subagent`를 사용합니다. (각 스킬의 `snippet.js`를 Playwright MCP `browser_evaluate`로 실행하는 것만 허용되며, `browser_subagent`에는 코드를 위임하지 않습니다.)
 3. **🚫 MCP 및 전역 설정 변경 금지**: `mcp_config.json`을 수정하지 마십시오.
 
 ---

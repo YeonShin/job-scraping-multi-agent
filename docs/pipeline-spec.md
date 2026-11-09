@@ -234,9 +234,9 @@
 ```json
 {
   "windowSize": 3,
-  "maxQueuedPerTrack": 80,
-  "maxPagesPerTrack": 2,
-  "maxPhase2Pages": 2,
+  "maxQueuedPerTrack": 100,
+  "maxPagesPerTrack": 20,
+  "maxPhase2Pages": 10,
   "reviewBatchSize": 12,
   "suspectSimilarity": 0.7,
   "jumpEnabled": { "saramin": true, "jobkorea": false, "wanted": false },
@@ -249,7 +249,7 @@
   }
 }
 ```
-* 일반적인 탐색 요청 시 사용자 대기 시간 최적화를 위해 **트랙별 기본 최대 2페이지(`maxPagesPerTrack: 2`)**로 제한합니다 (사용자의 명시적 확장 요청 시 동적 조정).
+* 기본 탐색 범위는 **트랙당 신규 공고 최대 100건(`maxQueuedPerTrack: 100`)** 기준이며, 안전 탐색 상한은 20페이지(`maxPagesPerTrack: 20`)입니다.
 
 
 ## 7. 실행 순서 개요 (이후 단계에서 구현)

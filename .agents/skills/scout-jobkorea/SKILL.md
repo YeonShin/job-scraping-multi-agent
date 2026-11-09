@@ -13,11 +13,16 @@ description: >-
 > - **판단은 코드가 전담**: 다음 페이지 이동 여부, 수집 종료는 모두 `tools/scanController.js`의 반환값(`action`)에 따릅니다.
 > - **필터 기준 및 규격**: [`.agents/rules/job-criteria.md`](../../rules/job-criteria.md) 및 [`docs/pipeline-spec.md`](../../../docs/pipeline-spec.md)를 참조합니다.
 
+> 🌐 **[브라우저 도구 규칙]**
+> - 목록 수집은 **Playwright MCP 도구**(`browser_navigate`, `browser_evaluate`, `browser_snapshot`, `browser_click`, `browser_wait_for` 등)를 직접 호출하여 수행합니다.
+> - `snippet.js`는 `browser_evaluate`로 **파일 내용 그대로** 실행합니다. **Antigravity `browser_subagent`에 위임하거나 코드를 작업 프롬프트에 붙여 넣지 마십시오.** (`browser_subagent`는 JS를 실행하지 못하고 스크롤·DOM 추출을 반복하는 방식으로 대체하여 느려지고 결과가 불안정해집니다.)
+> - `browser_evaluate`의 인자 `function`은 `() => { ... }` 형태를 기대합니다. `snippet.js`는 `(() => {...})()` 형태이므로 형식 오류가 나면 `() => ( <snippet 전체 식> )`로 감싸 실행하되 내용은 바꾸지 마십시오.
+
 ---
 
 ## 1. 잡코리아 UI 필터링 프로토콜 (URL 파라미터 미지원)
 
-잡코리아는 URL 쿼리 파라미터로 필터가 적용되지 않으므로, 내장 브라우저로 기본 URL에 진입한 후 **UI 요소를 직접 클릭**하여 필터를 설정합니다.
+잡코리아는 URL 쿼리 파라미터로 필터가 적용되지 않으므로, Playwright MCP로 기본 URL에 진입한 후 **UI 요소를 직접 클릭**하여 필터를 설정합니다. `browser_snapshot`으로 페이지의 요소를 확인한 뒤 `browser_click`의 `target`에 스냅샷의 요소 ref(또는 고유 선택자)를 지정하고, 렌더링은 `browser_wait_for`로 기다립니다.
 
 * **기본 진입 URL**: `https://www.jobkorea.co.kr/recruit/joblist?menucode=duty`
 
@@ -42,7 +47,7 @@ description: >-
 ### 🔄 단일 트랙 수집 루프
 1. **필터 설정**: 위의 프로토콜에 따라 해당 트랙의 UI 필터를 클릭 설정하고 1페이지 로드.
 2. **목록 스니펫 실행**:
-   - 브라우저 콘솔에서 [`.agents/skills/scout-jobkorea/snippet.js`](snippet.js) 코드를 `browser_evaluate`로 실행.
+   - Playwright MCP `browser_evaluate`로 [`.agents/skills/scout-jobkorea/snippet.js`](snippet.js)의 내용을 그대로 실행.
    - 결과를 `data/runs/{runId}/jobkorea_{track}/raw_{page}.json` 파일로 저장.
 3. **컨트롤러 스텝 호출**:
    ```bash
@@ -50,7 +55,7 @@ description: >-
    ```
 4. **결과 액션(`action`) 수행**:
    * **`NEXT_PAGE`**:
-     - 잡코리아는 URL 변경으로 이동할 수 없으므로, 목록 하단 페이지네이션 컨테이너에서 해당 페이지 번호 링크(예: `2`, `3` 버튼)를 브라우저로 직접 클릭하여 이동 후 2단계로 복귀. (잡코리아는 `JUMP_PAGE` 비활성)
+     - 잡코리아는 URL 변경으로 이동할 수 없으므로, 목록 하단 페이지네이션 컨테이너에서 해당 페이지 번호 링크(예: `2`, `3` 버튼)를 `browser_snapshot` 확인 후 `browser_click`으로 직접 클릭하여 이동 후 2단계로 복귀. (잡코리아는 `JUMP_PAGE` 비활성)
    * **`STOP`**:
      - 해당 트랙 수집 즉시 종료.
      - 반환된 `reason`과 누적 카운터를 확인하고 오케스트레이터에게 보고.

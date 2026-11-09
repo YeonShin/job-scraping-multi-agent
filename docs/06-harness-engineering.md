@@ -110,7 +110,7 @@ stateDiagram-v2
 
 ### 4. 세션 종료 기준 (Stop Reasons)
 `scanController`가 아래 사유로 `STOP`을 반환하며, 상한값은 [config/pipeline.json](../config/pipeline.json)에서 조정합니다.
-- **`LIMIT_PAGES`**: 트랙당 탐색 페이지 상한(`maxPagesPerTrack`, 기본 2) 도달. 사용자가 범위 확장을 명시하면 늘려서 진행합니다.
+- **`LIMIT_PAGES`**: 트랙당 탐색 페이지 상한(`maxPagesPerTrack`, 기본 20) 도달. 사용자가 범위 확장을 명시하면 늘려서 진행합니다.
 - **`LIMIT_QUEUED`**: 트랙당 큐 적재 상한(`maxQueuedPerTrack`, 기본 80) 도달. Phase 2 구간은 `maxPhase2Pages`로도 제한됩니다.
 - **`LIST_END`**: 플랫폼의 마지막 페이지 도달.
 - **`EMPTY_PAGE`**: 빈 페이지가 반환됨.
