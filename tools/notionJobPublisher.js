@@ -117,7 +117,10 @@ function normalizeDate(raw, opts = {}) {
 }
 
 function bulletBlocks(items) {
-  return items.map(item => ({
+  const arr = Array.isArray(items)
+    ? items
+    : (typeof items === 'string' ? items.split('\n').map(s => s.trim()).filter(Boolean) : [items]);
+  return arr.map(item => ({
     object: 'block',
     type: 'bulleted_list_item',
     bulleted_list_item: { rich_text: richText(item) }

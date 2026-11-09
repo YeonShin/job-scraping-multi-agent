@@ -19,7 +19,7 @@
     const card = link.closest('li.list-post') || link.closest('li') || link.closest('tr') || link.parentElement;
 
     let title = '';
-    const titleEl = card ? card.querySelector('.post-list-info a.title, a.title, a.link span, .tit a') : null;
+    const titleEl = card ? card.querySelector('.post-list-info a.title, a.title, a.link span, .tit a, td.tplTit strong a') : null;
     if (titleEl) {
       title = (titleEl.textContent || '').trim();
     } else {
@@ -27,13 +27,13 @@
     }
 
     let company = '';
-    const compEl = card ? card.querySelector('.post-list-corp a.name, a.name, .post-list-corp, .corp-name') : null;
+    const compEl = card ? card.querySelector('.post-list-corp a.name, a.name, .post-list-corp, .corp-name, td.tplCo a.link, td.tplCo a') : null;
     if (compEl) {
       company = (compEl.textContent || '').trim();
     }
 
     let career = '';
-    const careerEl = card ? card.querySelector('p.option span.exp, .option .exp, .exp, span.career') : null;
+    const careerEl = card ? card.querySelector('p.option span.exp, .option .exp, .exp, span.career, td.tplTit .etc span.cell, p.etc span.cell') : null;
     if (careerEl) {
       career = (careerEl.textContent || '').trim();
     }

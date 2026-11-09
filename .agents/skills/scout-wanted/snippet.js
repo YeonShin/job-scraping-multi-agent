@@ -22,21 +22,28 @@
 
     const card = link.closest('li') || link.parentElement;
 
-    // 제목: card 내 strong 태그 또는 aria-label, textContent
+    // 제목 및 회사명: 카드 내 button[data-position-id]의 data 속성 우선 추출, 없으면 strong/span fallback
     let title = '';
-    const strongEl = card ? card.querySelector('strong') : null;
-    if (strongEl) {
-      title = (strongEl.textContent || '').trim();
-    } else {
-      title = (link.getAttribute('aria-label') || link.textContent || '').trim();
+    let company = '';
+
+    const btn = card ? card.querySelector('button[data-position-id]') : null;
+    if (btn) {
+      title = (btn.getAttribute('data-position-name') || '').trim();
+      company = (btn.getAttribute('data-company-name') || '').trim();
     }
 
-    // 회사명: card 내 span 태그들 중 회사명 찾기 (또는 strong 다음의 span)
-    let company = '';
-    if (card) {
+    if (!title) {
+      const strongEl = card ? card.querySelector('strong') : null;
+      if (strongEl) {
+        title = (strongEl.textContent || '').trim();
+      } else {
+        title = (link.getAttribute('aria-label') || link.textContent || '').trim();
+      }
+    }
+
+    if (!company && card) {
       const spans = card.querySelectorAll('span');
       if (spans.length > 0) {
-        // 첫 번째 span이 보통 회사명
         company = (spans[0].textContent || '').trim();
       }
     }
