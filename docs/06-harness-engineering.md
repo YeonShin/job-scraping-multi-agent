@@ -94,14 +94,19 @@ stateDiagram-v2
 {
   "site": "saramin",
   "track": "track1",
-  "headJobId": "55053325",
-  "headWindow": ["55053325", "55053324", "55036577"],
-  "tailJobId": "55002287",
-  "tailWindow": ["55002287", "55000563", "54998016"],
-  "tailPageHint": 4,
+  "ranges": [
+    {
+      "headJobId": "55053325",
+      "headWindow": ["55053325", "55053324", "55036577"],
+      "tailJobId": "55002287",
+      "tailWindow": ["55002287", "55000563", "54998016"],
+      "tailPageHint": 4
+    }
+  ],
   "updatedAt": "2026-09-16T21:34:00+09:00"
 }
 ```
+* **다중 구간(Multi-Range) 보존 및 자동 병합**: 장기 미실행 등으로 신규 공고가 대량 유입되어 기존 체크포인트 상단(`headJobId`)에 도달하기 전에 `LIMIT_QUEUED`(100건) 등으로 종료되더라도, 이번 세션에 탐색한 구간이 `ranges` 배열에 추가되어 보존됩니다. 다음 실행 시 상단의 `COVERED` 구간을 즉시 스킵/점프하여 미탐색 공백(Gap)부터 이어서 수집하며, 두 구간이 만나면 하나로 자동 병합(Merge)됩니다.
 
 ### 3. 무중단 야간 실행 효과
 - **불필요한 중복 본문 로딩 감소**: 이미 검증한 구간의 공고는 상세 iframe/새 탭을 열지 않고 목록 ID만 확인합니다. (점프 허용은 사람인만 해당하며, 잡코리아와 원티드는 1페이지씩 앵커를 검증합니다.)
@@ -111,7 +116,7 @@ stateDiagram-v2
 ### 4. 세션 종료 기준 (Stop Reasons)
 `scanController`가 아래 사유로 `STOP`을 반환하며, 상한값은 [config/pipeline.json](../config/pipeline.json)에서 조정합니다.
 - **`LIMIT_PAGES`**: 트랙당 탐색 페이지 상한(`maxPagesPerTrack`, 기본 20) 도달. 사용자가 범위 확장을 명시하면 늘려서 진행합니다.
-- **`LIMIT_QUEUED`**: 트랙당 큐 적재 상한(`maxQueuedPerTrack`, 기본 80) 도달. Phase 2 구간은 `maxPhase2Pages`로도 제한됩니다.
+- **`LIMIT_QUEUED`**: 트랙당 큐 적재 상한(`maxQueuedPerTrack`, 기본 100) 도달. Phase 2 구간은 `maxPhase2Pages`로도 제한됩니다.
 - **`LIST_END`**: 플랫폼의 마지막 페이지 도달.
 - **`EMPTY_PAGE`**: 빈 페이지가 반환됨.
 - **`FILTER_MISMATCH`**: 현재 페이지에 적용된 필터가 기대 필터와 다름 (`expectedFilters` 불일치).

@@ -167,15 +167,19 @@
 {
   "site": "saramin",
   "track": "track1",
-  "headJobId": "51234567",
-  "headWindow": ["51234567", "51234560", "51234551"],
-  "tailJobId": "51190001",
-  "tailWindow": ["51190001", "51189990", "51189975"],
-  "tailPageHint": 42,
+  "ranges": [
+    {
+      "headJobId": "51234567",
+      "headWindow": ["51234567", "51234560", "51234551"],
+      "tailJobId": "51190001",
+      "tailWindow": ["51190001", "51189990", "51189975"],
+      "tailPageHint": 42
+    }
+  ],
   "updatedAt": "2026-10-05T02:45:00+09:00"
 }
 ```
-* `headWindow`, `tailWindow`: 최대 3개 (`windowSize`).
+* `ranges`: 다중 구간(Multi-Range) 배열 (`headWindow`, `tailWindow`는 최대 3개 `windowSize`). 신규 공고가 대량 유입되어 기존 상단 구간에 도달하기 전에 `LIMIT_QUEUED`/`LIMIT_PAGES`로 중단되더라도 이번 세션의 탐색 구간이 `ranges`에 독립 구간으로 보존되며, 이후 탐색에서 구간 사이의 공백(Gap)이 메워지면 단일 구간으로 자동 병합(Merge)됩니다.
 * `updatedAt`: `+09:00` 오프셋 ISO.
 
 ### 4.7 scanController 출력
