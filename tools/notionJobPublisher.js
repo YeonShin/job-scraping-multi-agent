@@ -173,10 +173,11 @@ function buildChildren(job) {
  * 노션 페이지 속성 + 본문(children) payload 생성 (API 호출 없음)
  */
 function buildPayload(job, dbId) {
+  const jobUrl = (job.url || '').replace('/relay/view-detail?', '/relay/view?');
   const properties = {
     '기업명': { title: richText(job.company || '기업명 미상') },
     '채용직무': { rich_text: richText(job.position || '') },
-    '채용링크': { url: job.url },
+    '채용링크': { url: jobUrl },
     '상태': { status: { name: '미지원' } },
     'AI 수집': { checkbox: true },
     'created_at': { date: { start: kstDateString() } }
