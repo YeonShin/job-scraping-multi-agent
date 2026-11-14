@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const checkpointManager = require('./checkpointManager');
-const { classifyId } = checkpointManager;
+const { classifyId, classifyIdWithRange, mergeRanges } = checkpointManager;
 const jobFilter = require('./jobFilter');
 const { log, error: logError } = require('./logger');
 
@@ -77,11 +77,11 @@ function checkFilterMatch(site, track, appliedFilters, expectedFiltersConfig) {
       }
     }
 
-    // 2) 사람인 track2는 company_type 이 없어야 함
-    if (site === 'saramin' && track === 'track2') {
+    // 2) 사람인 track2, track3는 company_type 이 없어야 함
+    if (site === 'saramin' && (track === 'track2' || track === 'track3')) {
       const hasCompanyType = appliedDecoded.some(app => app.startsWith('company_type='));
       if (hasCompanyType) {
-        logError(`[scanController] 사람인 track2에 company_type 지정 불가`);
+        logError(`[scanController] 사람인 ${track}에 company_type 지정 불가`);
         return false;
       }
     }
@@ -90,6 +90,24 @@ function checkFilterMatch(site, track, appliedFilters, expectedFiltersConfig) {
   }
 
   return true;
+}
+
+/**
+ * 점프 직후 첫 항목이 현재 스킵 중이던 COVERED 구간의 tail을 지나쳤는지(Overshot) 판정
+ */
+function isOvershotRange(firstItemId, cp, existingRanges, activeRangeIndex) {
+  if (!firstItemId) return false;
+  const c = classifyId(firstItemId, cp);
+  if (c === 'OLD') return true;
+  if (c === 'COVERED') return false;
+
+  // c === 'NEW' (다중 구간 사이의 Gap으로 떨어진 경우): activeRange의 tail보다 작으면 지나친 것
+  if (activeRangeIndex >= 0 && existingRanges[activeRangeIndex] && existingRanges[activeRangeIndex].tailJobId) {
+    try {
+      return BigInt(String(firstItemId)) < BigInt(String(existingRanges[activeRangeIndex].tailJobId));
+    } catch (e) {}
+  }
+  return false;
 }
 
 /**
@@ -159,6 +177,11 @@ function step(options = {}) {
     sessionTop: [],
     seenIds: [],
     lastProcessedIds: [],
+    sessionRanges: [],
+    currentGapHead: [],
+    currentGapLastIds: [],
+    activeRangeIndex: -1,
+    jumpedRanges: [],
     phase2PageCount: 0,
     hasJumped: false,
     isBacktracking: false,
@@ -178,6 +201,11 @@ function step(options = {}) {
   if (fs.existsSync(statePath)) {
     try {
       state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+      state.sessionRanges = state.sessionRanges || [];
+      state.currentGapHead = state.currentGapHead || [];
+      state.currentGapLastIds = state.currentGapLastIds || [];
+      state.jumpedRanges = state.jumpedRanges || [];
+      if (state.activeRangeIndex === undefined) state.activeRangeIndex = -1;
     } catch (e) {
       logError('[scanController] state.json 파싱 실패, 새로 초기화합니다.');
     }
@@ -205,10 +233,11 @@ function step(options = {}) {
   }
 
   // 6. 각 신규 ID 처리 및 분류
-  const newItemsToFilter = [];
+  const existingRanges = (cp && Array.isArray(cp.ranges)) ? cp.ranges : [];
   const newIdsInThisPage = [];
   let pageHasCovered = false;
   let pageAllCovered = (items.length > 0);
+  let lastCoveredRangeIndex = -1;
 
   for (const item of items) {
     if (state.counters.queued >= maxQueuedPerTrack) {
@@ -228,11 +257,30 @@ function step(options = {}) {
       state.lastProcessedIds = state.lastProcessedIds.slice(-windowSize * 2);
     }
 
-    const c = classifyId(strId, cp);
+    const { status: c, rangeIndex } = classifyIdWithRange(strId, cp);
 
     if (c === 'COVERED') {
       pageHasCovered = true;
+      lastCoveredRangeIndex = rangeIndex;
+      state.activeRangeIndex = rangeIndex;
       state.counters.coveredSkipped++;
+
+      // 직전까지 수집하던 미탐색 구간(currentGap)이 있었다면, 현재 COVERED 구간(existingRanges[rangeIndex])과 맞닿았으므로 구간 확정!
+      if (state.currentGapHead.length > 0) {
+        const hitRange = existingRanges[rangeIndex];
+        state.sessionRanges.push({
+          headJobId: state.currentGapHead[0],
+          headWindow: state.currentGapHead.slice(0, windowSize),
+          tailJobId: hitRange ? hitRange.tailJobId : state.currentGapLastIds[state.currentGapLastIds.length - 1],
+          tailWindow: hitRange && hitRange.tailWindow && hitRange.tailWindow.length > 0
+            ? hitRange.tailWindow
+            : state.currentGapLastIds.slice(-windowSize),
+          tailPageHint: hitRange && hitRange.tailPageHint ? hitRange.tailPageHint : page
+        });
+        state.currentGapHead = [];
+        state.currentGapLastIds = [];
+      }
+
       if (state.phase === 1) {
         state.phase1Complete = true;
         state.phase = 2;
@@ -243,7 +291,20 @@ function step(options = {}) {
         if (state.phase === 2) {
           state.phase = 3;
         }
+      } else if (c === 'NEW' && state.phase === 2) {
+        // 다중 구간(ranges) 환경에서 위쪽 COVERED 구간을 통과한 뒤 두 구간 사이의 미탐색 공백(Gap)에 진입한 경우
+        state.isBacktracking = false;
       }
+
+      // 미탐색 구간(NEW 또는 OLD) 진행 상태 기록
+      if (state.currentGapHead.length < windowSize) {
+        state.currentGapHead.push(strId);
+      }
+      state.currentGapLastIds.push(strId);
+      if (state.currentGapLastIds.length > windowSize * 2) {
+        state.currentGapLastIds = state.currentGapLastIds.slice(-windowSize * 2);
+      }
+
       // NEW 또는 OLD -> jobFilter.classify 실행
       const filterRes = jobFilter.classify([item], {
         site,
@@ -294,15 +355,17 @@ function step(options = {}) {
   } else if (state.counters.pages >= maxPagesPerTrack || state.phase2PageCount >= maxPhase2Pages) {
     action = 'STOP';
     stopReason = 'LIMIT_PAGES';
-  } else if (state.phase === 2 && pageAllCovered && jumpEnabled && !state.hasJumped) {
-    // 6) Phase 2 이고 페이지 전체가 COVERED 이며 jumpEnabled 이고 아직 점프하지 않았으면
+    } else if (state.phase === 2 && pageAllCovered && jumpEnabled && lastCoveredRangeIndex >= 0 && !state.jumpedRanges.includes(lastCoveredRangeIndex)) {
+    // 6) Phase 2 이고 페이지 전체가 COVERED 이며 jumpEnabled 이고 현재 COVERED 구간에서 아직 점프하지 않았으면
+    const activeRange = existingRanges[lastCoveredRangeIndex];
     const newCount = state.seenIds.filter(id => classifyId(id, cp) === 'NEW').length;
     const pageSize = items.length > 0 ? items.length : 20;
-    const tailHint = (cp && cp.tailPageHint) ? cp.tailPageHint : 1;
+    const tailHint = (activeRange && activeRange.tailPageHint) ? activeRange.tailPageHint : 1;
     const targetPage = tailHint + Math.ceil(newCount / pageSize);
 
     if (targetPage > page + 1) {
       state.hasJumped = true;
+      state.jumpedRanges.push(lastCoveredRangeIndex);
       state.lastJumpTarget = targetPage;
       action = 'JUMP_PAGE';
       nextPageNumber = targetPage;
@@ -310,8 +373,8 @@ function step(options = {}) {
       action = 'NEXT_PAGE';
       nextPageNumber = page + 1;
     }
-  } else if (state.hasJumped && (state.isBacktracking || (items.length > 0 && classifyId(items[0].id, cp) === 'OLD'))) {
-    // 7) 점프 직후 페이지 첫 항목이 OLD 면 되돌아가며, COVERED 가 포함된 페이지를 찾으면 거기서부터 NEXT_PAGE
+  } else if (state.hasJumped && (state.isBacktracking || (items.length > 0 && isOvershotRange(items[0].id, cp, existingRanges, state.activeRangeIndex)))) {
+    // 7) 점프 직후 페이지 첫 항목이 현재 COVERED 구간의 tail을 지나쳤다면(OLD 또는 다음 Gap) 되돌아가며, COVERED 가 포함된 페이지를 찾으면 거기서부터 NEXT_PAGE
     if (pageHasCovered) {
       // COVERED 가 포함된 페이지를 찾았으므로 백트래킹 종료하고 전진
       state.isBacktracking = false;
@@ -338,47 +401,56 @@ function step(options = {}) {
   if (action === 'STOP') {
     state.stopReason = stopReason;
 
-    let headJobId = cp ? cp.headJobId : null;
-    let headWindow = (cp && cp.headWindow) ? [...cp.headWindow] : [];
+    const isErrorStop = (
+      stopReason === 'FILTER_MISMATCH' ||
+      stopReason === 'CONTAINER_NOT_FOUND' ||
+      stopReason === 'EMPTY_PAGE'
+    );
 
-    // head: 체크포인트가 없었거나 phase1Complete 이면 sessionTop. 아니면 기존 유지
-    if (!cp || !cp.headJobId || state.phase1Complete) {
-      if (state.sessionTop.length > 0) {
-        headJobId = state.sessionTop[0];
-        headWindow = state.sessionTop.slice(0, windowSize);
+    const candidateRanges = [...existingRanges];
+
+    if (!isErrorStop) {
+      // 1) 탐색 도중 COVERED 와 만나 확정된 구간들 반영
+      for (const sr of state.sessionRanges) {
+        candidateRanges.push(sr);
+      }
+
+      // 2) STOP 시점에 진행 중이던 미탐색 구간(currentGap) 반영
+      if (state.currentGapHead.length > 0 && state.currentGapLastIds.length > 0) {
+        const lastIds = state.currentGapLastIds.slice(-windowSize);
+        candidateRanges.push({
+          headJobId: state.currentGapHead[0],
+          headWindow: state.currentGapHead.slice(0, windowSize),
+          tailJobId: lastIds[lastIds.length - 1],
+          tailWindow: lastIds,
+          tailPageHint: page
+        });
+      }
+
+      // 3) 만약 Phase 3 진입 또는 Phase 2 LIST_END 도달 시 최하단 구간의 tail 확장 반영
+      if ((state.phase === 3 || (state.phase === 2 && stopReason === 'LIST_END')) && state.lastProcessedIds.length > 0) {
+        const lastIds = state.lastProcessedIds.slice(-windowSize);
+        const firstExisting = existingRanges[0] || {};
+        const topHead = state.sessionTop.length > 0 ? state.sessionTop[0] : (firstExisting.headJobId || lastIds[0]);
+        const topWin = state.sessionTop.length > 0 ? state.sessionTop.slice(0, windowSize) : (firstExisting.headWindow || lastIds);
+        if (state.phase1Complete) {
+          candidateRanges.push({
+            headJobId: topHead,
+            headWindow: topWin,
+            tailJobId: lastIds[lastIds.length - 1],
+            tailWindow: lastIds,
+            tailPageHint: page
+          });
+        }
       }
     }
 
-    let tailJobId = cp ? cp.tailJobId : null;
-    let tailWindow = (cp && cp.tailWindow) ? [...cp.tailWindow] : [];
-    let tailPageHint = (cp && cp.tailPageHint) ? cp.tailPageHint : null;
-
-    // tail: 체크포인트가 없었거나 Phase 3 에 도달했으면 마지막으로 처리한 하위 windowSize 개 id, tailPageHint = 현재 페이지.
-    // Phase 2 에서 LIST_END 로 끝났으면 마지막으로 본 id. 그 외는 기존 유지.
-    if (!cp || !cp.tailJobId || state.phase === 3) {
-      if (state.lastProcessedIds.length > 0) {
-        const lastIds = state.lastProcessedIds.slice(-windowSize);
-        tailJobId = lastIds[lastIds.length - 1];
-        tailWindow = lastIds;
-        tailPageHint = page;
-      }
-    } else if (state.phase === 2 && stopReason === 'LIST_END') {
-      if (state.lastProcessedIds.length > 0) {
-        const lastIds = state.lastProcessedIds.slice(-windowSize);
-        tailJobId = lastIds[lastIds.length - 1];
-        tailWindow = lastIds;
-        tailPageHint = page;
-      }
-    }
+    const mergedRanges = mergeRanges(candidateRanges, windowSize);
 
     const proposed = {
       site,
       track,
-      headJobId,
-      headWindow,
-      tailJobId,
-      tailWindow,
-      tailPageHint,
+      ranges: mergedRanges,
       updatedAt: getKstIsoString()
     };
 

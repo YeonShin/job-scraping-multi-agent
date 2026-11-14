@@ -42,7 +42,7 @@ function writePageInput(dir, filename, data) {
   return p;
 }
 
-describe('scanController 단위 테스트', () => {
+describe('scanController 단위 테스트 (ranges 전용 스키마)', () => {
   beforeEach(() => {
     cleanup();
     fs.mkdirSync(RUNS_DIR, { recursive: true });
@@ -54,7 +54,7 @@ describe('scanController 단위 테스트', () => {
     cleanup();
   });
 
-  test('1. 첫 실행(체크포인트 없음)이 상한(LIMIT_QUEUED)에서 멈춤 -> head=sessionTop, tail=마지막 처리분', () => {
+  test('1. 첫 실행(체크포인트 없음)이 상한(LIMIT_QUEUED)에서 멈춤 -> ranges[0] 에 sessionTop ~ 마지막 처리분 기록', () => {
     createConfig({ maxQueuedPerTrack: 3 });
     const runId = 'test-run-1';
     const inputDir = path.resolve(TEST_DIR, 'inputs');
@@ -85,31 +85,34 @@ describe('scanController 단위 테스트', () => {
     assert.equal(res.action, 'STOP');
     assert.equal(res.reason, 'LIMIT_QUEUED');
 
-    // proposed_checkpoint 확인
     const proposedPath = path.resolve(RUNS_DIR, runId, 'saramin_track1', 'proposed_checkpoint.json');
     assert.ok(fs.existsSync(proposedPath));
     const proposed = JSON.parse(fs.readFileSync(proposedPath, 'utf8'));
 
-    assert.equal(proposed.headJobId, '100');
-    assert.deepEqual(proposed.headWindow, ['100', '90', '80']);
-    assert.equal(proposed.tailJobId, '80'); // 3개 처리 후 중단되었으므로 80이 마지막
+    assert.equal(proposed.ranges.length, 1);
+    assert.equal(proposed.ranges[0].headJobId, '100');
+    assert.deepEqual(proposed.ranges[0].headWindow, ['100', '90', '80']);
+    assert.equal(proposed.ranges[0].tailJobId, '80');
   });
 
   test('2. 정상 실행: 신규 -> head 도달 -> Phase 2 스킵 -> tail 통과 -> Phase 3 수집 -> LIST_END', () => {
     const runId = 'test-run-2';
     const inputDir = path.resolve(TEST_DIR, 'inputs');
 
-    // 기존 체크포인트 생성
     const cpSiteDir = path.resolve(CP_DIR, 'saramin');
     fs.mkdirSync(cpSiteDir, { recursive: true });
     fs.writeFileSync(path.resolve(cpSiteDir, 'track1.json'), JSON.stringify({
       site: 'saramin',
       track: 'track1',
-      headJobId: '100',
-      headWindow: ['100', '95', '90'],
-      tailJobId: '50',
-      tailWindow: ['50', '45', '40'],
-      tailPageHint: 2
+      ranges: [
+        {
+          headJobId: '100',
+          headWindow: ['100', '95', '90'],
+          tailJobId: '50',
+          tailWindow: ['50', '45', '40'],
+          tailPageHint: 2
+        }
+      ]
     }, null, 2), 'utf8');
 
     // Page 1: 신규 120, 110 -> 100(head 도달) -> Phase 2 전환
@@ -134,7 +137,7 @@ describe('scanController 단위 테스트', () => {
     });
 
     assert.equal(res1.phase, 2);
-    assert.equal(res1.counters.queued, 2); // 120, 110
+    assert.equal(res1.counters.queued, 2);
 
     // Page 2: 95, 90, 50 (모두 COVERED)
     const page2Path = writePageInput(inputDir, 'page2.json', {
@@ -146,7 +149,7 @@ describe('scanController 단위 테스트', () => {
       ]
     });
 
-    const res2 = step({
+    step({
       runId,
       site: 'saramin',
       track: 'track1',
@@ -179,7 +182,7 @@ describe('scanController 단위 테스트', () => {
     });
 
     assert.equal(res3.phase, 3);
-    assert.equal(res3.counters.queued, 4); // 120, 110, 30, 20
+    assert.equal(res3.counters.queued, 4);
 
     // Page 4: 빈 목록 (새 id 0개 -> LIST_END)
     const page4Path = writePageInput(inputDir, 'page4.json', {
@@ -201,14 +204,14 @@ describe('scanController 단위 테스트', () => {
     assert.equal(res4.action, 'STOP');
     assert.equal(res4.reason, 'LIST_END');
 
-    // proposed_checkpoint 확인
     const proposedPath = path.resolve(RUNS_DIR, runId, 'saramin_track1', 'proposed_checkpoint.json');
     const proposed = JSON.parse(fs.readFileSync(proposedPath, 'utf8'));
 
-    assert.equal(proposed.headJobId, '120');
-    assert.deepEqual(proposed.headWindow, ['120', '110', '100']);
-    assert.equal(proposed.tailJobId, '20');
-    assert.deepEqual(proposed.tailWindow, ['40', '30', '20']);
+    assert.equal(proposed.ranges.length, 1);
+    assert.equal(proposed.ranges[0].headJobId, '120');
+    assert.deepEqual(proposed.ranges[0].headWindow, ['120', '110', '100']);
+    assert.equal(proposed.ranges[0].tailJobId, '20');
+    assert.deepEqual(proposed.ranges[0].tailWindow, ['40', '30', '20']);
   });
 
   test('3. headWindow 3개가 모두 삭제됨 -> 숫자 비교로 Phase 2 전환', () => {
@@ -220,13 +223,16 @@ describe('scanController 단위 테스트', () => {
     fs.writeFileSync(path.resolve(cpSiteDir, 'track1.json'), JSON.stringify({
       site: 'saramin',
       track: 'track1',
-      headJobId: '100',
-      headWindow: ['100', '95', '90'],
-      tailJobId: '50',
-      tailWindow: ['50', '45', '40']
+      ranges: [
+        {
+          headJobId: '100',
+          headWindow: ['100', '95', '90'],
+          tailJobId: '50',
+          tailWindow: ['50', '45', '40']
+        }
+      ]
     }, null, 2), 'utf8');
 
-    // 100, 95, 90은 사라졌고, 110(NEW), 85(숫자 비교 상 50 <= 85 <= 100 이므로 COVERED)
     const page1Path = writePageInput(inputDir, 'page1.json', {
       appliedFilters: ["exp_cd=1", "cat_mcls=2", "company_type=scale001,scale002,scale003", "sort=RD"],
       items: [
@@ -247,7 +253,7 @@ describe('scanController 단위 테스트', () => {
     });
 
     assert.equal(res.phase, 2);
-    assert.equal(res.counters.coveredSkipped, 1); // 85
+    assert.equal(res.counters.coveredSkipped, 1);
   });
 
   test('4. tailWindow 3개가 모두 마감되어 사라짐 -> 숫자 비교로 Phase 3 전환', () => {
@@ -259,20 +265,22 @@ describe('scanController 단위 테스트', () => {
     fs.writeFileSync(path.resolve(cpSiteDir, 'track1.json'), JSON.stringify({
       site: 'saramin',
       track: 'track1',
-      headJobId: '100',
-      headWindow: ['100', '95', '90'],
-      tailJobId: '50',
-      tailWindow: ['50', '45', '40']
+      ranges: [
+        {
+          headJobId: '100',
+          headWindow: ['100', '95', '90'],
+          tailJobId: '50',
+          tailWindow: ['50', '45', '40']
+        }
+      ]
     }, null, 2), 'utf8');
 
-    // Page 1: 95 도달 -> Phase 2
     const p1 = writePageInput(inputDir, 'p1.json', {
       appliedFilters: ["exp_cd=1", "cat_mcls=2", "company_type=scale001,scale002,scale003", "sort=RD"],
       items: [{ id: '95', url: 'https://saramin.co.kr/view?rec_idx=95', title: '개발자95', company: '회사A', career: '신입' }]
     });
     step({ runId, site: 'saramin', track: 'track1', page: 1, inputPath: p1, configPath: CONFIG_PATH, runsDir: RUNS_DIR, checkpointsDir: CP_DIR });
 
-    // Page 2: 50, 45, 40 은 사라졌고, 35 가 등장 (35 < tail(50) -> 숫자 비교 상 OLD)
     const p2 = writePageInput(inputDir, 'p2.json', {
       appliedFilters: ["exp_cd=1", "cat_mcls=2", "company_type=scale001,scale002,scale003", "sort=RD"],
       items: [{ id: '35', url: 'https://saramin.co.kr/view?rec_idx=35', title: '개발자35', company: '회사B', career: '신입' }]
@@ -280,7 +288,7 @@ describe('scanController 단위 테스트', () => {
     const res2 = step({ runId, site: 'saramin', track: 'track1', page: 2, inputPath: p2, configPath: CONFIG_PATH, runsDir: RUNS_DIR, checkpointsDir: CP_DIR });
 
     assert.equal(res2.phase, 3);
-    assert.equal(res2.counters.queued, 1); // 35 수집
+    assert.equal(res2.counters.queued, 1);
   });
 
   test('5. 끌어올리기: tail 보다 작은 오래된 id 가 1페이지 상단에 등장 -> OLD 로 수집 대상, 구간 판정은 깨지지 않음', () => {
@@ -292,13 +300,16 @@ describe('scanController 단위 테스트', () => {
     fs.writeFileSync(path.resolve(cpSiteDir, 'track1.json'), JSON.stringify({
       site: 'saramin',
       track: 'track1',
-      headJobId: '100',
-      headWindow: ['100', '95', '90'],
-      tailJobId: '50',
-      tailWindow: ['50', '45', '40']
+      ranges: [
+        {
+          headJobId: '100',
+          headWindow: ['100', '95', '90'],
+          tailJobId: '50',
+          tailWindow: ['50', '45', '40']
+        }
+      ]
     }, null, 2), 'utf8');
 
-    // 1페이지에 신규 110, 끌올된 30(OLD), 105(NEW)
     const p1 = writePageInput(inputDir, 'p1.json', {
       appliedFilters: ["exp_cd=1", "cat_mcls=2", "company_type=scale001,scale002,scale003", "sort=RD"],
       items: [
@@ -319,13 +330,11 @@ describe('scanController 단위 테스트', () => {
       checkpointsDir: CP_DIR
     });
 
-    // COVERED를 만나지 않았으므로 Phase 1 유지
     assert.equal(res.phase, 1);
-    // 110, 30, 105 모두 심사 큐 적재 대상
     assert.equal(res.counters.queued, 3);
   });
 
-  test('6. Phase 1 도중 LIMIT_QUEUED -> head 기존 유지', () => {
+  test('6. Phase 1 도중 LIMIT_QUEUED -> 다중 구간(ranges)으로 신규 상단 구간과 기존 구간이 모두 보존됨', () => {
     createConfig({ maxQueuedPerTrack: 2 });
     const runId = 'test-run-6';
     const inputDir = path.resolve(TEST_DIR, 'inputs');
@@ -335,13 +344,16 @@ describe('scanController 단위 테스트', () => {
     fs.writeFileSync(path.resolve(cpSiteDir, 'track1.json'), JSON.stringify({
       site: 'saramin',
       track: 'track1',
-      headJobId: '100',
-      headWindow: ['100', '95', '90'],
-      tailJobId: '50',
-      tailWindow: ['50', '45', '40']
+      ranges: [
+        {
+          headJobId: '100',
+          headWindow: ['100', '95', '90'],
+          tailJobId: '50',
+          tailWindow: ['50', '45', '40']
+        }
+      ]
     }, null, 2), 'utf8');
 
-    // 1페이지: 130, 125, 120 (모두 NEW). maxQueuedPerTrack 2 도달 시 STOP
     const p1 = writePageInput(inputDir, 'p1.json', {
       appliedFilters: ["exp_cd=1", "cat_mcls=2", "company_type=scale001,scale002,scale003", "sort=RD"],
       items: [
@@ -365,12 +377,19 @@ describe('scanController 단위 테스트', () => {
     assert.equal(res.action, 'STOP');
     assert.equal(res.reason, 'LIMIT_QUEUED');
 
-    // proposed_checkpoint 확인: phase1Complete=false 이므로 기존 head 100 유지!
     const proposedPath = path.resolve(RUNS_DIR, runId, 'saramin_track1', 'proposed_checkpoint.json');
     const proposed = JSON.parse(fs.readFileSync(proposedPath, 'utf8'));
 
-    assert.equal(proposed.headJobId, '100');
-    assert.deepEqual(proposed.headWindow, ['100', '95', '90']);
+    assert.equal(proposed.ranges.length, 2);
+    assert.equal(proposed.ranges[0].headJobId, '130');
+    assert.equal(proposed.ranges[0].tailJobId, '125');
+    assert.equal(proposed.ranges[1].headJobId, '100');
+    assert.equal(proposed.ranges[1].tailJobId, '50');
+
+    assert.equal(checkpointManager.classifyId('125', proposed), 'COVERED');
+    assert.equal(checkpointManager.classifyId('115', proposed), 'NEW');
+    assert.equal(checkpointManager.classifyId('95', proposed), 'COVERED');
+    assert.equal(checkpointManager.classifyId('30', proposed), 'OLD');
   });
 
   test('7. 점프가 tail 을 지나침 -> 되돌아오기', () => {
@@ -382,14 +401,17 @@ describe('scanController 단위 테스트', () => {
     fs.writeFileSync(path.resolve(cpSiteDir, 'track1.json'), JSON.stringify({
       site: 'saramin',
       track: 'track1',
-      headJobId: '100',
-      headWindow: ['100', '95', '90'],
-      tailJobId: '50',
-      tailWindow: ['50', '45', '40'],
-      tailPageHint: 5
+      ranges: [
+        {
+          headJobId: '100',
+          headWindow: ['100', '95', '90'],
+          tailJobId: '50',
+          tailWindow: ['50', '45', '40'],
+          tailPageHint: 5
+        }
+      ]
     }, null, 2), 'utf8');
 
-    // 1페이지: 신규 105, 그리고 95(COVERED) 도달 -> Phase 2 전환
     const p1 = writePageInput(inputDir, 'p1.json', {
       appliedFilters: ["exp_cd=1", "cat_mcls=2", "company_type=scale001,scale002,scale003", "sort=RD"],
       items: [
@@ -399,7 +421,6 @@ describe('scanController 단위 테스트', () => {
     });
     step({ runId, site: 'saramin', track: 'track1', page: 1, inputPath: p1, configPath: CONFIG_PATH, runsDir: RUNS_DIR, checkpointsDir: CP_DIR });
 
-    // 2페이지: 전체가 COVERED (90, 85). jumpEnabled 이므로 tailPageHint(5) 로 JUMP_PAGE 6 발생
     const p2 = writePageInput(inputDir, 'p2.json', {
       appliedFilters: ["exp_cd=1", "cat_mcls=2", "company_type=scale001,scale002,scale003", "sort=RD"],
       items: [
@@ -411,7 +432,6 @@ describe('scanController 단위 테스트', () => {
     assert.equal(resJump.action, 'JUMP_PAGE');
     assert.equal(resJump.page, 6);
 
-    // 점프한 6페이지: 첫 항목부터 35(OLD) -> tail을 지나침 -> JUMP_PAGE (현재-1 = 5) 로 되돌아가기
     const p6 = writePageInput(inputDir, 'p6.json', {
       appliedFilters: ["exp_cd=1", "cat_mcls=2", "company_type=scale001,scale002,scale003", "sort=RD"],
       items: [
@@ -422,7 +442,6 @@ describe('scanController 단위 테스트', () => {
     assert.equal(resBack.action, 'JUMP_PAGE');
     assert.equal(resBack.page, 5);
 
-    // 되돌아간 5페이지: COVERED(50) 포함되어 있음 -> 거기서부터 NEXT_PAGE(6) 로 전진
     const p5 = writePageInput(inputDir, 'p5.json', {
       appliedFilters: ["exp_cd=1", "cat_mcls=2", "company_type=scale001,scale002,scale003", "sort=RD"],
       items: [
@@ -444,13 +463,16 @@ describe('scanController 단위 테스트', () => {
     fs.writeFileSync(path.resolve(cpSiteDir, 'track1.json'), JSON.stringify({
       site: 'saramin',
       track: 'track1',
-      headJobId: '100',
-      headWindow: ['100', '95', '90'],
-      tailJobId: '50',
-      tailWindow: ['50', '45', '40']
+      ranges: [
+        {
+          headJobId: '100',
+          headWindow: ['100', '95', '90'],
+          tailJobId: '50',
+          tailWindow: ['50', '45', '40']
+        }
+      ]
     }, null, 2), 'utf8');
 
-    // 필터 불일치: sort=RD 및 cat_mcls 누락
     const p1 = writePageInput(inputDir, 'p1.json', {
       appliedFilters: ["exp_cd=1"],
       items: [
@@ -475,8 +497,9 @@ describe('scanController 단위 테스트', () => {
     const proposedPath = path.resolve(RUNS_DIR, runId, 'saramin_track1', 'proposed_checkpoint.json');
     const proposed = JSON.parse(fs.readFileSync(proposedPath, 'utf8'));
 
-    assert.equal(proposed.headJobId, '100');
-    assert.equal(proposed.tailJobId, '50');
+    assert.equal(proposed.ranges.length, 1);
+    assert.equal(proposed.ranges[0].headJobId, '100');
+    assert.equal(proposed.ranges[0].tailJobId, '50');
   });
 
   test('9. commitRun: publish_result.json 이 없으면 에러 발생', () => {
@@ -494,31 +517,36 @@ describe('scanController 단위 테스트', () => {
     const runDir = path.resolve(RUNS_DIR, runId);
     fs.mkdirSync(runDir, { recursive: true });
 
-    // publish_result.json 생성
     fs.writeFileSync(path.resolve(runDir, 'publish_result.json'), JSON.stringify({ published: 5 }), 'utf8');
 
-    // 정상 트랙 (saramin_track1)
     const t1Dir = path.resolve(runDir, 'saramin_track1');
     fs.mkdirSync(t1Dir, { recursive: true });
     fs.writeFileSync(path.resolve(t1Dir, 'state.json'), JSON.stringify({ stopReason: 'LIST_END' }), 'utf8');
     fs.writeFileSync(path.resolve(t1Dir, 'proposed_checkpoint.json'), JSON.stringify({
       site: 'saramin',
       track: 'track1',
-      headJobId: '200',
-      headWindow: ['200', '190'],
-      tailJobId: '10',
-      tailWindow: ['20', '10']
+      ranges: [
+        {
+          headJobId: '200',
+          headWindow: ['200', '190'],
+          tailJobId: '10',
+          tailWindow: ['20', '10']
+        }
+      ]
     }), 'utf8');
 
-    // 필터 불일치 트랙 (jobkorea_track1)
     const t2Dir = path.resolve(runDir, 'jobkorea_track1');
     fs.mkdirSync(t2Dir, { recursive: true });
     fs.writeFileSync(path.resolve(t2Dir, 'state.json'), JSON.stringify({ stopReason: 'FILTER_MISMATCH' }), 'utf8');
     fs.writeFileSync(path.resolve(t2Dir, 'proposed_checkpoint.json'), JSON.stringify({
       site: 'jobkorea',
       track: 'track1',
-      headJobId: '999',
-      tailJobId: '888'
+      ranges: [
+        {
+          headJobId: '999',
+          tailJobId: '888'
+        }
+      ]
     }), 'utf8');
 
     const result = checkpointManager.commitRun(runId, RUNS_DIR, CP_DIR);
@@ -527,16 +555,94 @@ describe('scanController 단위 테스트', () => {
     assert.equal(result.skipped.length, 1);
     assert.equal(result.skipped[0].reason, 'FILTER_MISMATCH');
 
-    // 실제 체크포인트 파일 확인
     const actualCpPath = path.resolve(CP_DIR, 'saramin', 'track1.json');
     assert.ok(fs.existsSync(actualCpPath));
     const actualCp = JSON.parse(fs.readFileSync(actualCpPath, 'utf8'));
-    assert.equal(actualCp.headJobId, '200');
-    assert.equal(actualCp.tailJobId, '10');
+    assert.equal(actualCp.ranges.length, 1);
+    assert.equal(actualCp.ranges[0].headJobId, '200');
+    assert.equal(actualCp.ranges[0].tailJobId, '10');
 
-    // 잡코리아는 반영되지 않았음 확인
     const jkCpPath = path.resolve(CP_DIR, 'jobkorea', 'track1.json');
     assert.ok(!fs.existsSync(jkCpPath));
   });
-});
 
+  test('11. 다중 구간(Multi-Range) 점프 및 구간 자동 병합(Merge) 시뮬레이션', () => {
+    const runId = 'test-run-multi-merge';
+    const inputDir = path.resolve(TEST_DIR, 'inputs');
+
+    const cpSiteDir = path.resolve(CP_DIR, 'saramin');
+    fs.mkdirSync(cpSiteDir, { recursive: true });
+    fs.writeFileSync(path.resolve(cpSiteDir, 'track1.json'), JSON.stringify({
+      site: 'saramin',
+      track: 'track1',
+      ranges: [
+        {
+          headJobId: '1200',
+          headWindow: ['1200', '1199', '1198'],
+          tailJobId: '1101',
+          tailWindow: ['1103', '1102', '1101'],
+          tailPageHint: 5
+        },
+        {
+          headJobId: '1000',
+          headWindow: ['1000', '999', '998'],
+          tailJobId: '901',
+          tailWindow: ['903', '902', '901'],
+          tailPageHint: 15
+        }
+      ]
+    }, null, 2), 'utf8');
+
+    // 1페이지: 1200, 1199 (첫 번째 구간 COVERED) -> 즉시 pageHint(5)로 점프!
+    const p1 = writePageInput(inputDir, 'p1.json', {
+      appliedFilters: ["exp_cd=1", "cat_mcls=2", "company_type=scale001,scale002,scale003", "sort=RD"],
+      items: [
+        { id: '1200', url: 'https://saramin.co.kr/view?rec_idx=1200', title: '개발자1200', company: '회사A', career: '신입' },
+        { id: '1199', url: 'https://saramin.co.kr/view?rec_idx=1199', title: '개발자1199', company: '회사B', career: '신입' }
+      ]
+    });
+    const res1 = step({ runId, site: 'saramin', track: 'track1', page: 1, inputPath: p1, configPath: CONFIG_PATH, runsDir: RUNS_DIR, checkpointsDir: CP_DIR });
+    assert.equal(res1.action, 'JUMP_PAGE');
+    assert.equal(res1.page, 5);
+
+    // 5페이지: 1101(첫 구간 끝 COVERED), 1100(중간 Gap NEW), 1050(중간 Gap NEW)
+    const p5 = writePageInput(inputDir, 'p5.json', {
+      appliedFilters: ["exp_cd=1", "cat_mcls=2", "company_type=scale001,scale002,scale003", "sort=RD"],
+      items: [
+        { id: '1101', url: 'https://saramin.co.kr/view?rec_idx=1101', title: '개발자1101', company: '회사C', career: '신입' },
+        { id: '1100', url: 'https://saramin.co.kr/view?rec_idx=1100', title: '개발자1100', company: '회사D', career: '신입' },
+        { id: '1050', url: 'https://saramin.co.kr/view?rec_idx=1050', title: '개발자1050', company: '회사E', career: '신입' }
+      ]
+    });
+    const res5 = step({ runId, site: 'saramin', track: 'track1', page: 5, inputPath: p5, configPath: CONFIG_PATH, runsDir: RUNS_DIR, checkpointsDir: CP_DIR });
+    assert.equal(res5.action, 'NEXT_PAGE');
+    assert.equal(res5.counters.queued, 2);
+
+    // 6페이지: 1001(중간 Gap NEW), 1000(두 번째 구간 Head COVERED!) -> 두 구간이 하나로 연결됨
+    const p6 = writePageInput(inputDir, 'p6.json', {
+      appliedFilters: ["exp_cd=1", "cat_mcls=2", "company_type=scale001,scale002,scale003", "sort=RD"],
+      items: [
+        { id: '1001', url: 'https://saramin.co.kr/view?rec_idx=1001', title: '개발자1001', company: '회사F', career: '신입' },
+        { id: '1000', url: 'https://saramin.co.kr/view?rec_idx=1000', title: '개발자1000', company: '회사G', career: '신입' }
+      ]
+    });
+    const res6 = step({ runId, site: 'saramin', track: 'track1', page: 6, inputPath: p6, configPath: CONFIG_PATH, runsDir: RUNS_DIR, checkpointsDir: CP_DIR });
+    assert.equal(res6.counters.queued, 3);
+
+    // 7페이지: 빈 페이지(LIST_END)로 종료
+    const p7 = writePageInput(inputDir, 'p7.json', {
+      appliedFilters: ["exp_cd=1", "cat_mcls=2", "company_type=scale001,scale002,scale003", "sort=RD"],
+      items: []
+    });
+    const res7 = step({ runId, site: 'saramin', track: 'track1', page: 7, inputPath: p7, configPath: CONFIG_PATH, runsDir: RUNS_DIR, checkpointsDir: CP_DIR });
+    assert.equal(res7.action, 'STOP');
+    assert.equal(res7.reason, 'LIST_END');
+
+    const proposedPath = path.resolve(RUNS_DIR, runId, 'saramin_track1', 'proposed_checkpoint.json');
+    const proposed = JSON.parse(fs.readFileSync(proposedPath, 'utf8'));
+
+    assert.equal(proposed.ranges.length, 1);
+    assert.equal(proposed.ranges[0].headJobId, '1200');
+    assert.equal(proposed.ranges[0].tailJobId, '901');
+  });
+});

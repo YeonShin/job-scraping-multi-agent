@@ -44,7 +44,6 @@ function parseSiteAndTrack(siteOrKey, maybeTrack) {
     return { site: 'saramin', track: 'track1', key: 'saramin_track1' };
   }
 
-  // '_' 구분자 분리 (예: saramin_track1 -> site: saramin, track: track1)
   const parts = rawKey.split('_');
   if (parts.length >= 2) {
     const site = parts[0].toLowerCase();
@@ -119,10 +118,105 @@ function getCheckpoint(siteOrKey, maybeTrack) {
 }
 
 /**
- * 특정 플랫폼/트랙의 체크포인트 갱신 저장
- * @param {string} siteOrKey 예: 'saramin_track1' 또는 'saramin'
- * @param {string|Object} trackOrData track 이름 또는 데이터 객체
- * @param {Object} [maybeData] track 이름이 2번째 인자로 왔을 때 데이터 객체
+ * 겹치거나 맞닿은 구간(ranges)들을 병합하고 최신(큰 ID) 순으로 정렬
+ * @param {Array<{headJobId: string|null, headWindow?: string[], tailJobId: string|null, tailWindow?: string[], tailPageHint?: number|null}>} ranges
+ * @param {number} [windowSize=3]
+ */
+function mergeRanges(ranges, windowSize = 3) {
+  if (!Array.isArray(ranges) || ranges.length === 0) return [];
+
+  const valid = ranges
+    .filter(r => r && (r.headJobId || r.tailJobId || (Array.isArray(r.headWindow) && r.headWindow.length > 0) || (Array.isArray(r.tailWindow) && r.tailWindow.length > 0)))
+    .map(r => ({
+      headJobId: r.headJobId ? String(r.headJobId) : null,
+      headWindow: Array.isArray(r.headWindow) ? r.headWindow.map(String) : [],
+      tailJobId: r.tailJobId ? String(r.tailJobId) : null,
+      tailWindow: Array.isArray(r.tailWindow) ? r.tailWindow.map(String) : [],
+      tailPageHint: typeof r.tailPageHint === 'number' ? r.tailPageHint : null
+    }));
+
+  if (valid.length <= 1) return valid;
+
+  // 내림차순 정렬 (headJobId가 큰 최신 구간 우선)
+  const sorted = [...valid].sort((a, b) => {
+    try {
+      const aHead = BigInt(a.headJobId || a.tailJobId || '0');
+      const bHead = BigInt(b.headJobId || b.tailJobId || '0');
+      if (bHead > aHead) return 1;
+      if (bHead < aHead) return -1;
+      return 0;
+    } catch (e) {
+      return 0;
+    }
+  });
+
+  const merged = [sorted[0]];
+
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = merged[merged.length - 1];
+    const curr = sorted[i];
+
+    let shouldMerge = false;
+
+    // 1. 윈도우 교집합 검사 (역전 현상이 있는 플랫폼에서도 앵커가 겹치면 병합)
+    const prevIds = new Set([
+      ...(prev.headJobId ? [prev.headJobId] : []),
+      ...(prev.tailJobId ? [prev.tailJobId] : []),
+      ...prev.headWindow,
+      ...prev.tailWindow
+    ]);
+    const currIds = [
+      ...(curr.headJobId ? [curr.headJobId] : []),
+      ...(curr.tailJobId ? [curr.tailJobId] : []),
+      ...curr.headWindow,
+      ...curr.tailWindow
+    ];
+
+    if (currIds.some(id => prevIds.has(id))) {
+      shouldMerge = true;
+    }
+
+    // 2. 숫자 범위 겹침/인접 검사 (prev.tailJobId <= curr.headJobId)
+    if (!shouldMerge && prev.tailJobId && curr.headJobId) {
+      try {
+        if (BigInt(prev.tailJobId) <= BigInt(curr.headJobId)) {
+          shouldMerge = true;
+        }
+      } catch (e) {}
+    }
+
+    if (shouldMerge) {
+      let useCurrTail = true;
+      if (prev.tailJobId && curr.tailJobId) {
+        try {
+          if (BigInt(prev.tailJobId) < BigInt(curr.tailJobId)) {
+            useCurrTail = false;
+          }
+        } catch (e) {}
+      }
+
+      const combinedHeadWin = Array.from(new Set([...prev.headWindow, ...curr.headWindow])).slice(0, windowSize);
+      const combinedTailWin = useCurrTail
+        ? Array.from(new Set([...prev.tailWindow, ...curr.tailWindow])).slice(-windowSize)
+        : Array.from(new Set([...curr.tailWindow, ...prev.tailWindow])).slice(-windowSize);
+
+      merged[merged.length - 1] = {
+        headJobId: prev.headJobId || curr.headJobId,
+        headWindow: combinedHeadWin,
+        tailJobId: useCurrTail ? (curr.tailJobId || prev.tailJobId) : (prev.tailJobId || curr.tailJobId),
+        tailWindow: combinedTailWin,
+        tailPageHint: useCurrTail ? (curr.tailPageHint || prev.tailPageHint || null) : (prev.tailPageHint || curr.tailPageHint || null)
+      };
+    } else {
+      merged.push(curr);
+    }
+  }
+
+  return merged;
+}
+
+/**
+ * 특정 플랫폼/트랙의 체크포인트 갱신 저장 (ranges 배열 기반)
  */
 function saveCheckpoint(siteOrKey, trackOrData, maybeData) {
   let site, track, data;
@@ -139,7 +233,6 @@ function saveCheckpoint(siteOrKey, trackOrData, maybeData) {
     data = (typeof trackOrData === 'object' ? trackOrData : {}) || {};
   }
 
-  const { headJobId, headWindow = [], tailJobId, tailWindow = [], tailPageHint = null } = data;
   const siteDir = path.resolve(CHECKPOINTS_DIR, site);
   const targetFile = path.resolve(siteDir, `${track}.json`);
 
@@ -149,14 +242,14 @@ function saveCheckpoint(siteOrKey, trackOrData, maybeData) {
     }
 
     const prev = getCheckpoint(site, track) || {};
+    const finalRanges = Array.isArray(data.ranges)
+      ? mergeRanges(data.ranges)
+      : (Array.isArray(prev.ranges) ? mergeRanges(prev.ranges) : []);
+
     const updated = {
       site,
       track,
-      headJobId: headJobId !== undefined ? headJobId : (prev.headJobId || null),
-      headWindow: Array.isArray(headWindow) && headWindow.length > 0 ? headWindow : (prev.headWindow || []),
-      tailJobId: tailJobId !== undefined ? tailJobId : (prev.tailJobId || null),
-      tailWindow: Array.isArray(tailWindow) && tailWindow.length > 0 ? tailWindow : (prev.tailWindow || []),
-      tailPageHint: tailPageHint !== undefined ? tailPageHint : (prev.tailPageHint || null),
+      ranges: finalRanges,
       updatedAt: getKstIsoString()
     };
 
@@ -164,7 +257,9 @@ function saveCheckpoint(siteOrKey, trackOrData, maybeData) {
     fs.writeFileSync(tempFile, JSON.stringify(updated, null, 2), 'utf8');
     fs.renameSync(tempFile, targetFile);
 
-    log(`[Checkpoint] ✅ [${site}/${track}] 상태 갱신 완료 (Head: ${updated.headJobId}, Tail: ${updated.tailJobId})`);
+    const top = finalRanges[0] || {};
+    const bottom = finalRanges[finalRanges.length - 1] || {};
+    log(`[Checkpoint] ✅ [${site}/${track}] 상태 갱신 완료 (Ranges: ${finalRanges.length}개, TopHead: ${top.headJobId || 'null'}, BottomTail: ${bottom.tailJobId || 'null'})`);
     return updated;
   } catch (e) {
     log(`[Checkpoint] [${site}/${track}] 상태 저장 실패:`, e.message);
@@ -173,89 +268,79 @@ function saveCheckpoint(siteOrKey, trackOrData, maybeData) {
 }
 
 /**
+ * ID가 체크포인트의 몇 번째 구간(rangeIndex)에 속하는지 또는 어떤 상태인지 상세 반환
+ * @param {string|number} id 공고 ID
+ * @param {Object|null} cp 체크포인트 객체 ({ ranges: [...] })
+ * @returns {{ status: 'NEW'|'COVERED'|'OLD', rangeIndex: number }}
+ */
+function classifyIdWithRange(id, cp) {
+  if (!id || !cp || !Array.isArray(cp.ranges) || cp.ranges.length === 0) {
+    return { status: 'NEW', rangeIndex: -1 };
+  }
+
+  const strId = String(id).trim();
+  const ranges = cp.ranges;
+
+  // 1. 모든 구간에 대해 윈도우 Set 앵커 매칭 우선 확인 (ID 역전 플랫폼에서도 정확히 일치)
+  for (let idx = 0; idx < ranges.length; idx++) {
+    const r = ranges[idx];
+    const headWin = Array.isArray(r.headWindow) ? r.headWindow.map(String) : [];
+    const tailWin = Array.isArray(r.tailWindow) ? r.tailWindow.map(String) : [];
+    if (
+      headWin.includes(strId) ||
+      tailWin.includes(strId) ||
+      (r.headJobId && String(r.headJobId) === strId) ||
+      (r.tailJobId && String(r.tailJobId) === strId)
+    ) {
+      return { status: 'COVERED', rangeIndex: idx };
+    }
+  }
+
+  // 2. 숫자(BigInt) 비교
+  try {
+    const numId = BigInt(strId);
+
+    for (let idx = 0; idx < ranges.length; idx++) {
+      const r = ranges[idx];
+      const numHead = r.headJobId ? BigInt(r.headJobId) : null;
+      const numTail = r.tailJobId ? BigInt(r.tailJobId) : null;
+
+      // 내림차순 정렬된 구간들 중 현재 구간의 head보다 크다면:
+      // 첫 구간보다 위(최신)이거나 이전 구간과 현재 구간 사이의 미탐색 공백(Gap)이므로 NEW
+      if (numHead !== null && numId > numHead) {
+        return { status: 'NEW', rangeIndex: -1 };
+      }
+
+      if (numHead !== null && numTail !== null) {
+        if (numId >= numTail && numId <= numHead) {
+          return { status: 'COVERED', rangeIndex: idx };
+        }
+      } else if (numHead !== null && numTail === null) {
+        if (numId <= numHead) {
+          return { status: 'COVERED', rangeIndex: idx };
+        }
+      } else if (numHead === null && numTail !== null) {
+        if (numId >= numTail) {
+          return { status: 'COVERED', rangeIndex: idx };
+        }
+      }
+    }
+
+    // 모든 구간(최하단 구간의 tail)보다 작은 경우: 과거 미탐색 공고(OLD)
+    return { status: 'OLD', rangeIndex: -1 };
+  } catch (err) {
+    return { status: 'NEW', rangeIndex: -1 };
+  }
+}
+
+/**
  * ID를 체크포인트와 비교하여 NEW, COVERED, OLD로 분류
- * - 윈도우(headWindow, tailWindow)에 있으면 COVERED
- * - 숫자 비교: id > head -> NEW | tail <= id <= head -> COVERED | id < tail -> OLD
- * - 체크포인트가 없거나 head/tail이 없으면 항상 NEW
  * @param {string|number} id 공고 ID
  * @param {Object|null} cp 체크포인트 객체
  * @returns {'NEW'|'COVERED'|'OLD'}
  */
 function classifyId(id, cp) {
-  if (!id) return 'NEW';
-  const strId = String(id).trim();
-
-  if (!cp) return 'NEW';
-
-  const headWindow = Array.isArray(cp.headWindow) ? cp.headWindow.map(String) : [];
-  const tailWindow = Array.isArray(cp.tailWindow) ? cp.tailWindow.map(String) : [];
-
-  // 1. 윈도우 Set 앵커 매칭 (역전된 플랫폼에서도 정확히 일치)
-  if (headWindow.includes(strId) || tailWindow.includes(strId)) {
-    return 'COVERED';
-  }
-  if (cp.headJobId && String(cp.headJobId) === strId) {
-    return 'COVERED';
-  }
-  if (cp.tailJobId && String(cp.tailJobId) === strId) {
-    return 'COVERED';
-  }
-
-  // 2. 체크포인트 기준값이 없으면 항상 NEW
-  if (!cp.headJobId && !cp.tailJobId && headWindow.length === 0 && tailWindow.length === 0) {
-    return 'NEW';
-  }
-
-  // 3. 숫자 비교
-  try {
-    const numId = BigInt(strId);
-    const numHead = cp.headJobId ? BigInt(cp.headJobId) : null;
-    const numTail = cp.tailJobId ? BigInt(cp.tailJobId) : null;
-
-    if (numHead !== null && numId > numHead) {
-      return 'NEW';
-    }
-
-    if (numHead !== null && numTail !== null) {
-      if (numId >= numTail && numId <= numHead) {
-        return 'COVERED';
-      }
-      if (numId < numTail) {
-        return 'OLD';
-      }
-    } else if (numHead !== null && numTail === null) {
-      // head만 있는 경우
-      return numId <= numHead ? 'COVERED' : 'NEW';
-    } else if (numHead === null && numTail !== null) {
-      // tail만 있는 경우
-      return numId >= numTail ? 'COVERED' : 'OLD';
-    }
-  } catch (err) {
-    // 숫자로 변환할 수 없는 경우 fallback
-    return 'NEW';
-  }
-
-  return 'NEW';
-}
-
-/**
- * 현재 공고 ID가 Head에 도달했는지 확인
- */
-function isHeadHit(jobId, checkpoint) {
-  if (!checkpoint || !jobId) return false;
-  if (checkpoint.headJobId && String(checkpoint.headJobId) === String(jobId)) return true;
-  if (Array.isArray(checkpoint.headWindow) && checkpoint.headWindow.map(String).includes(String(jobId))) return true;
-  return false;
-}
-
-/**
- * 현재 공고 ID가 Tail에 도달했는지 확인
- */
-function isTailHit(jobId, checkpoint) {
-  if (!checkpoint || !jobId) return false;
-  if (checkpoint.tailJobId && String(checkpoint.tailJobId) === String(jobId)) return true;
-  if (Array.isArray(checkpoint.tailWindow) && checkpoint.tailWindow.map(String).includes(String(jobId))) return true;
-  return false;
+  return classifyIdWithRange(id, cp).status;
 }
 
 /**
@@ -320,20 +405,19 @@ function commitRun(runId, runsDir, checkpointsDir) {
         continue;
       }
 
-      // 실제 체크포인트에 저장
       const siteDir = path.resolve(baseCpDir, site);
       fs.mkdirSync(siteDir, { recursive: true });
       const targetFile = path.resolve(siteDir, `${track}.json`);
 
       const prev = fs.existsSync(targetFile) ? JSON.parse(fs.readFileSync(targetFile, 'utf8')) : {};
+      const finalRanges = Array.isArray(proposed.ranges)
+        ? mergeRanges(proposed.ranges)
+        : (Array.isArray(prev.ranges) ? mergeRanges(prev.ranges) : []);
+
       const updated = {
         site,
         track,
-        headJobId: proposed.headJobId !== undefined ? proposed.headJobId : (prev.headJobId || null),
-        headWindow: Array.isArray(proposed.headWindow) && proposed.headWindow.length > 0 ? proposed.headWindow : (prev.headWindow || []),
-        tailJobId: proposed.tailJobId !== undefined ? proposed.tailJobId : (prev.tailJobId || null),
-        tailWindow: Array.isArray(proposed.tailWindow) && proposed.tailWindow.length > 0 ? proposed.tailWindow : (prev.tailWindow || []),
-        tailPageHint: proposed.tailPageHint !== undefined ? proposed.tailPageHint : (prev.tailPageHint || null),
+        ranges: finalRanges,
         updatedAt: getKstIsoString()
       };
 
@@ -363,7 +447,9 @@ if (require.main === module) {
     const target = args[1] || 'saramin_track1';
     const head = args[2];
     const tail = args[3];
-    saveCheckpoint(target, { headJobId: head, tailJobId: tail });
+    saveCheckpoint(target, {
+      ranges: head || tail ? [{ headJobId: head || null, headWindow: head ? [head] : [], tailJobId: tail || null, tailWindow: tail ? [tail] : [], tailPageHint: null }] : []
+    });
   } else if (action === 'commit') {
     let runId = null;
     for (let i = 1; i < args.length; i++) {
@@ -394,9 +480,9 @@ module.exports = {
   getCheckpoint,
   saveCheckpoint,
   classifyId,
+  classifyIdWithRange,
+  mergeRanges,
   commitRun,
-  isHeadHit,
-  isTailHit,
   loadAllCheckpoints,
   getCheckpointFilePath,
   parseSiteAndTrack
